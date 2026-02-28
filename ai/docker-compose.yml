@@ -1,0 +1,7 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./agent:/agent
