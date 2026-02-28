@@ -11,8 +11,8 @@ docker run exterminator-agent
 
 ## Development
 
-Use docker-compose to mount `ai/agent` directly into the container so file
-changes are reflected immediately (hot reload, no rebuild needed):
+Use docker-compose to mount `ai/agent` directly into the container. The
+`pnpm dev` command uses `node --watch` so file changes restart automatically:
 
 ```bash
 docker compose up
@@ -20,3 +20,4 @@ docker compose up
 
 The local `agent/` directory is mounted at `/agent` inside the container, so any
 edits you make on the host are visible in the running container instantly.
+`node_modules` is kept in a named volume to avoid conflicts with the host.

@@ -3,5 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: pnpm dev
     volumes:
       - ./agent:/agent
+      - agent_node_modules:/agent/node_modules
+
+volumes:
+  agent_node_modules:
