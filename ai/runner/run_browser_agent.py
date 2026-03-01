@@ -346,13 +346,17 @@ async def main():
     run_dir = ctx.run_dir   # runs/<run_id>/  (created by the property)
 
     from browser_use import Agent, BrowserSession
+
+    display = os.environ.get("DISPLAY")
+    use_headed = display is not None
+    print(f"  [video] headless={not use_headed}, DISPLAY={display}")
+
     from browser_use.browser.profile import BrowserProfile
-    # Use headed mode under xvfb so CDP screencasting captures real frames
-    use_headed = os.environ.get("DISPLAY") is not None
     profile = BrowserProfile(
         headless=not use_headed,
         record_video_dir=str(run_dir),
-        interaction_highlight_color="rgb(99, 102, 241)",  # indigo
+        screen={"width": 1280, "height": 720},
+        interaction_highlight_color="rgb(99, 102, 241)",
         interaction_highlight_duration=1.5,
         wait_for_network_idle_page_load_time=5.0,
     )
@@ -362,48 +366,55 @@ async def main():
         llm=llm,
         browser=session,
         max_failures=5,
-        output_model_schema=output_schema,    # enforces typed JSON output
-        available_file_paths=source_files or None,  # lets agent read source files
+        output_model_schema=output_schema,
+        available_file_paths=source_files or None,
         register_new_step_callback=on_step,
-        # Navigate to the app URL immediately at session start, BEFORE the LLM
-        # processes its first prompt. This eliminates most of the blank intro in
-        # the recorded video (recording starts on about:blank, and pre-navigation
-        # means the blank window is only the ~1s browser launch time, not the
-        # 30-60s the LLM takes to respond to the first prompt).
-        # NOTE: `directly_open_url=True` (default) already does this, but gets
-        # skipped when the task contains multiple URLs (e.g. stack trace URLs),
-        # so we force it explicitly via initial_actions.
         initial_actions=[{"navigate": {"url": ctx.input.app_url, "new_tab": False}}],
     )
     history = await agent.run(max_steps=20)
 
-    # Close the browser session to finalize the video recording.
-    # Playwright writes video asynchronously on context close, so we need to
-    # explicitly access page.video to trigger the save, then wait for the file.
+    # Get video path from pages before closing
+    raw_video_pw_path = None
     try:
-        # Access video objects before closing to ensure they're tracked
-        for context in session.browser.contexts if hasattr(session, 'browser') and session.browser else []:
-            for page in context.pages:
-                try:
-                    if page.video:
-                        video_path_obj = await page.video.path()
-                        print(f"  [video] page video path: {video_path_obj}")
-                except Exception:
-                    pass
-    except Exception:
-        pass
+        if hasattr(session, '_context') and session._context:
+            for page in session._context.pages:
+                if page.video:
+                    raw_video_pw_path = await page.video.path()
+                    print(f"  [video] page video at: {raw_video_pw_path} ({Path(raw_video_pw_path).stat().st_size} bytes)")
+                    break
+    except Exception as e:
+        print(f"  [video] pre-close path check: {e}")
+
+    # Close session — this closes the browser context which finalizes the video
+    try:
+        if hasattr(session, '_context') and session._context:
+            await session._context.close()
+            print("  [video] context closed")
+    except Exception as e:
+        print(f"  [video] context close: {e}")
 
     try:
         await session.close()
     except Exception:
         pass
 
-    # Wait for video file to appear on disk (Playwright writes async after context close)
+    await asyncio.sleep(3)
+
     video_path: str | None = None
     dest = run_dir / f"{agent_name}.mp4"
-    print(f"  [video] waiting for raw video in {run_dir}...")
-    for attempt in range(15):
-        await asyncio.sleep(2)
+
+    # Check the Playwright video path
+    if raw_video_pw_path and Path(raw_video_pw_path).exists():
+        sz = Path(raw_video_pw_path).stat().st_size
+        print(f"  [video] after close: {raw_video_pw_path} = {sz} bytes")
+        if sz > 1024:
+            trim_and_polish_video(str(raw_video_pw_path), str(dest))
+            Path(raw_video_pw_path).unlink(missing_ok=True)
+            video_path = str(dest)
+            print(f"  [video] saved: {dest} ({dest.stat().st_size // 1024} KB)")
+
+    if not video_path:
+        # Search for any video file
         raw_videos = sorted(
             [p for p in run_dir.glob("*.*")
              if p.suffix in (".mp4", ".webm")
@@ -417,14 +428,10 @@ async def main():
             trim_and_polish_video(str(raw_mp4), str(dest))
             raw_mp4.unlink(missing_ok=True)
             video_path = str(dest)
-            size_kb = dest.stat().st_size // 1024
-            print(f"  [video] saved: {dest} ({size_kb} KB)")
-            break
-        if attempt % 3 == 2:
+            print(f"  [video] saved: {dest} ({dest.stat().st_size // 1024} KB)")
+        else:
             all_files = list(run_dir.glob("*.*"))
-            print(f"  [video] attempt {attempt+1}/15, files: {[f'{f.name}({f.stat().st_size})' for f in all_files]}")
-    else:
-        print("  [video] no recording found after 30s wait")
+            print(f"  [video] no recording. files: {[f'{f.name}({f.stat().st_size})' for f in all_files]}")
 
     raw = history.final_result()
     print("\n" + "─" * 60)
