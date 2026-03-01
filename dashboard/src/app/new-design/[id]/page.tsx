@@ -205,6 +205,16 @@ function VideoSlot({
   height: string;
 }) {
   const [hasError, setHasError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (!hasError || !src) return;
+    const timer = setInterval(() => {
+      setHasError(false);
+      setRetryKey((k) => k + 1);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [hasError, src]);
 
   return (
     <div className="flex-1">
@@ -213,7 +223,8 @@ function VideoSlot({
       </p>
       {src && !hasError ? (
         <video
-          src={src}
+          key={retryKey}
+          src={`${src}${retryKey ? `?r=${retryKey}` : ""}`}
           controls
           playsInline
           className="w-full rounded-lg bg-black ring-1 ring-white/[0.06]"
@@ -226,7 +237,7 @@ function VideoSlot({
           style={{ height, background: "rgba(255,255,255,0.02)" }}
         >
           <p className="text-xs text-[#484f58]">
-            {hasError ? "Video not available" : placeholder ?? "—"}
+            {hasError ? "Waiting for video…" : placeholder ?? "—"}
           </p>
         </div>
       )}
