@@ -21,8 +21,8 @@ COPY agent/ .
 WORKDIR /app/runner
 
 COPY runner/requirements.txt ./
-RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
-RUN playwright install --with-deps chromium
+RUN pip install --break-system-packages --no-cache-dir -r requirements.txt playwright
+RUN python3 -m playwright install --with-deps chromium
 
 COPY runner/ .
 

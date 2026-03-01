@@ -21,13 +21,15 @@ LLM: set BROWSER_USE_API_KEY (preferred), ANTHROPIC_API_KEY, or OPENAI_API_KEY i
 
 import asyncio
 import os
+import shutil
 import sys
+from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from build_prompt import build_prompt
-from context import PipelineContext
+from context import PipelineContext, RUNS_DIR
 
 load_dotenv()
 
@@ -219,16 +221,38 @@ async def main():
         print(f"  [step {n_steps}] {label[:80]}")
         ctx.agent_step(agent_name, n_steps, label[:120], detail=detail)
 
-    from browser_use import Agent
+    # Set up per-run video recording directory.
+    # browser-use saves a UUID-named .mp4 there; we rename it after the run.
+    run_dir = ctx.run_dir   # runs/<run_id>/  (created by the property)
+    recording_dir = run_dir / "recordings"
+    recording_dir.mkdir(exist_ok=True)
+
+    from browser_use import Agent, BrowserSession
+    session = BrowserSession(
+        record_video_dir=str(recording_dir),
+        headless=True,
+    )
     agent = Agent(
         task=task,
         llm=llm,
+        browser=session,
         max_failures=3,
         output_model_schema=output_schema,    # enforces typed JSON output
         available_file_paths=source_files or None,  # lets agent read source files
         register_new_step_callback=on_step,
     )
     history = await agent.run(max_steps=20)
+
+    # Find the recorded video (UUID-named .mp4) and move it to a stable path.
+    video_path: str | None = None
+    mp4_files = sorted(recording_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if mp4_files:
+        dest = run_dir / f"{agent_name}.mp4"
+        shutil.move(str(mp4_files[0]), str(dest))
+        video_path = str(dest)
+        print(f"  video: {dest}")
+    else:
+        print("  video: not recorded (install browser-use[video] to enable)")
 
     raw = history.final_result()
     print("\n" + "─" * 60)
@@ -260,6 +284,7 @@ async def main():
             steps=out.steps,
             browser_logs=out.browserLogs,
             notes=out.notes,
+            video_path=video_path,
         )
         ctx.agent_done(agent_name, f"reproduced={out.reproduced}")
         print(f"\nReproduced: {out.reproduced}")
@@ -275,6 +300,7 @@ async def main():
             browser_logs=out.browserLogs,
             new_errors=out.newErrors,
             notes=out.notes,
+            video_path=video_path,
         )
         if out.fixed:
             ctx.mark_resolved()

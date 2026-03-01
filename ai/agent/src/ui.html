@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exterminator</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0b0b12;--surface:#13131f;--border:#1e1e30;--border-hi:#2a2a42;
+  --text:#e2e8f0;--text-dim:#8891a4;--text-faint:#555e72;
+  --accent:#6366f1;--accent-dim:#4f46e5;
+  --green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;--purple:#a855f7;
+  --radius:10px;--card-gap:20px;
+}
+html{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+body{min-height:100vh;display:flex;flex-direction:column}
+a{color:var(--accent);text-decoration:none}
+code,pre,.mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.85em}
+button{font:inherit;cursor:pointer;border:none;border-radius:6px;padding:8px 18px;transition:.15s}
+
+/* Layout */
+header{display:flex;align-items:center;gap:12px;padding:16px 28px;
+  border-bottom:1px solid var(--border);background:var(--surface)}
+header h1{font-size:18px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:8px}
+header .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+header .dot.off{background:var(--text-faint)}
+header .spacer{flex:1}
+header .run-id{color:var(--text-dim);font-size:13px}
+
+main{flex:1;max-width:960px;width:100%;margin:0 auto;padding:var(--card-gap) 20px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px 24px;margin-bottom:var(--card-gap)}
+.card h2{font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--text-dim);margin-bottom:14px}
+
+/* Status badge */
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;letter-spacing:.3px}
+.badge.in_progress{background:rgba(245,158,11,.15);color:var(--amber)}
+.badge.fixed{background:rgba(34,197,94,.15);color:var(--green)}
+.badge.failed{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.idle{background:rgba(99,102,241,.1);color:var(--accent)}
+.badge.stopped{background:rgba(85,94,114,.2);color:var(--text-dim)}
+
+/* Pipeline steps */
+.pipeline-steps{display:flex;align-items:center;gap:6px;margin:16px 0 12px}
+.pipeline-step{padding:6px 16px;border-radius:6px;font-size:13px;font-weight:500;
+  background:var(--bg);color:var(--text-faint);border:1px solid var(--border);transition:.2s}
+.pipeline-step.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pipeline-step.done{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.3)}
+.pipeline-arrow{color:var(--text-faint);font-size:12px}
+
+/* Form */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--text-dim);margin-bottom:5px}
+.form-group input,.form-group textarea{width:100%;padding:9px 12px;border-radius:6px;
+  border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;
+  transition:.15s;resize:vertical}
+.form-group input:focus,.form-group textarea:focus{outline:none;border-color:var(--accent)}
+.form-group textarea{min-height:80px;font-family:'JetBrains Mono',monospace;font-size:12px}
+
+.btn-primary{background:var(--accent);color:#fff;font-weight:600;padding:10px 24px}
+.btn-primary:hover{background:var(--accent-dim)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-danger{background:rgba(239,68,68,.15);color:var(--red);font-weight:600}
+.btn-danger:hover{background:rgba(239,68,68,.25)}
+.btn-secondary{background:var(--bg);color:var(--text-dim);border:1px solid var(--border);font-weight:500}
+.btn-secondary:hover{border-color:var(--border-hi);color:var(--text)}
+
+.controls-row{display:flex;gap:10px;align-items:center;margin-top:10px}
+
+/* Current goal */
+.current-goal{color:var(--text-dim);font-size:13px;margin:8px 0 0;min-height:20px}
+.current-goal strong{color:var(--text);font-weight:500}
+
+/* Activity log */
+.log-container{max-height:420px;overflow-y:auto;border-radius:8px;background:var(--bg);
+  border:1px solid var(--border);padding:4px 0}
+.log-entry{display:grid;grid-template-columns:72px 80px 1fr;gap:8px;
+  padding:5px 14px;font-size:12px;border-bottom:1px solid var(--border);align-items:baseline}
+.log-entry:last-child{border-bottom:none}
+.log-time{color:var(--text-faint);font-family:monospace}
+.log-agent{font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.3px}
+.log-agent.reproduce{color:var(--blue)}
+.log-agent.fix{color:var(--purple)}
+.log-agent.validate{color:var(--green)}
+.log-msg{color:var(--text-dim);word-break:break-word}
+.log-detail{grid-column:3;color:var(--text-faint);font-size:11px;padding-left:4px}
+
+/* State inspector */
+.state-sections{display:flex;flex-direction:column;gap:10px}
+.state-section{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.state-section summary{padding:10px 14px;cursor:pointer;font-weight:600;font-size:13px;
+  color:var(--text-dim);background:var(--bg);user-select:none;list-style:none;
+  display:flex;align-items:center;gap:8px}
+.state-section summary::before{content:'▸';font-size:11px;transition:.15s;display:inline-block}
+.state-section[open] summary::before{transform:rotate(90deg)}
+.state-section .content{padding:12px 14px;font-size:12px}
+.state-section pre{white-space:pre-wrap;word-break:break-word;color:var(--text-dim);
+  max-height:320px;overflow-y:auto}
+
+/* Result banner */
+.result-banner{padding:16px 20px;border-radius:var(--radius);margin-bottom:var(--card-gap);
+  font-weight:600;display:flex;align-items:center;gap:12px}
+.result-banner.fixed{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:var(--green)}
+.result-banner.failed{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:var(--red)}
+.result-banner.not-reproduced{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);color:var(--amber)}
+
+/* Error display */
+.error-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);
+  border-radius:8px;padding:12px 16px;color:var(--red);font-size:13px;margin-top:12px}
+
+/* Key/value list */
+.kv{display:grid;grid-template-columns:140px 1fr;gap:4px 12px;font-size:13px}
+.kv dt{color:var(--text-faint);font-weight:500}
+.kv dd{color:var(--text)}
+
+.hidden{display:none !important}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:3px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>&#x1fab2;</span> Exterminator</h1>
+  <span class="spacer"></span>
+  <span id="hdr-run" class="run-id"></span>
+  <span id="hdr-dot" class="dot off"></span>
+</header>
+
+<main>
+  <!-- Start form (shown when no active run) -->
+  <section id="sec-form" class="card">
+    <h2>Start a Run</h2>
+    <form id="start-form">
+      <div class="form-group">
+        <label for="f-trace">Stack Trace *</label>
+        <textarea id="f-trace" rows="5" required placeholder="TypeError: Cannot read properties of null..."></textarea>
+      </div>
+      <div class="form-group">
+        <label for="f-url">App URL *</label>
+        <input id="f-url" type="url" required placeholder="http://localhost:3000" value="http://localhost:3000">
+      </div>
+      <div class="form-group">
+        <label for="f-dir">Source Directory *</label>
+        <input id="f-dir" required placeholder="/absolute/path/to/source">
+      </div>
+      <div class="form-group">
+        <label for="f-desc">App Description</label>
+        <input id="f-desc" placeholder="Optional — helps the agent understand the app">
+      </div>
+      <div class="controls-row">
+        <button type="submit" class="btn-primary" id="btn-start">Start Run</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Result banner -->
+  <div id="banner" class="result-banner hidden"></div>
+
+  <!-- Pipeline card (shown when run active) -->
+  <section id="sec-pipeline" class="card hidden">
+    <h2>Pipeline</h2>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span id="p-badge" class="badge"></span>
+      <span id="p-attempt" style="color:var(--text-faint);font-size:13px"></span>
+    </div>
+    <div class="pipeline-steps">
+      <span id="step-reproduce" class="pipeline-step">Reproduce</span>
+      <span class="pipeline-arrow">&#x2192;</span>
+      <span id="step-fix" class="pipeline-step">Fix</span>
+      <span class="pipeline-arrow">&#x2192;</span>
+      <span id="step-validate" class="pipeline-step">Validate</span>
+    </div>
+    <div id="p-goal" class="current-goal"></div>
+    <div class="controls-row">
+      <button id="btn-stop" class="btn-danger">Stop &amp; Reset</button>
+      <button id="btn-new" class="btn-secondary hidden">New Run</button>
+    </div>
+    <div id="p-error" class="error-box hidden"></div>
+  </section>
+
+  <!-- Input summary -->
+  <section id="sec-input" class="card hidden">
+    <h2>Input</h2>
+    <dl class="kv">
+      <dt>App URL</dt><dd id="i-url"></dd>
+      <dt>Source Dir</dt><dd id="i-dir" class="mono"></dd>
+      <dt>Description</dt><dd id="i-desc"></dd>
+    </dl>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text-faint)">Stack Trace</summary>
+      <pre class="mono" style="margin-top:8px;color:var(--text-dim);font-size:11px" id="i-trace"></pre>
+    </details>
+  </section>
+
+  <!-- Activity log -->
+  <section id="sec-log" class="card hidden">
+    <h2>Activity Log <span id="log-count" style="color:var(--text-faint);font-weight:400"></span></h2>
+    <div id="log-container" class="log-container"></div>
+  </section>
+
+  <!-- State inspector -->
+  <section id="sec-state" class="card hidden">
+    <h2>State Inspector</h2>
+    <div class="state-sections">
+      <details class="state-section" id="si-reproduce">
+        <summary>Reproduce Result</summary>
+        <div class="content"><pre id="si-reproduce-pre">—</pre></div>
+      </details>
+      <details class="state-section" id="si-attempts">
+        <summary>Attempts</summary>
+        <div class="content"><pre id="si-attempts-pre">—</pre></div>
+      </details>
+      <details class="state-section" id="si-progress">
+        <summary>Progress</summary>
+        <div class="content"><pre id="si-progress-pre">—</pre></div>
+      </details>
+      <details class="state-section" id="si-raw">
+        <summary>Raw JSON</summary>
+        <div class="content"><pre id="si-raw-pre">—</pre></div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+let polling = null;
+let lastLogLen = 0;
+
+async function poll() {
+  try {
+    const res = await fetch("/api/runs/current");
+    const data = await res.json();
+    render(data);
+    $("#hdr-dot").classList.remove("off");
+  } catch {
+    $("#hdr-dot").classList.add("off");
+  }
+}
+
+function startPolling() {
+  if (polling) return;
+  poll();
+  polling = setInterval(poll, 1000);
+}
+
+function render(s) {
+  const hasRun = s.active;
+  const ctx = s.context;
+
+  // Toggle sections
+  toggle("#sec-form", !hasRun);
+  toggle("#sec-pipeline", hasRun);
+  toggle("#sec-input", hasRun && ctx);
+  toggle("#sec-log", hasRun && ctx?.progress?.log?.length > 0);
+  toggle("#sec-state", hasRun && ctx);
+
+  if (!hasRun) {
+    toggle("#banner", false);
+    lastLogLen = 0;
+    return;
+  }
+
+  // Header
+  $("#hdr-run").textContent = ctx ? `Run ${ctx.runId}` : "";
+
+  // Pipeline badge
+  const status = ctx?.status || "in_progress";
+  $("#p-badge").textContent = status.replace("_", " ");
+  $("#p-badge").className = `badge ${status}`;
+
+  // Attempt counter
+  const nAttempts = ctx?.attempts?.length || 0;
+  $("#p-attempt").textContent = nAttempts > 0 ? `Attempt ${nAttempts} of ${5}` : "";
+
+  // Pipeline step indicators
+  const agent = ctx?.progress?.currentAgent;
+  const phase = ctx?.progress?.phase;
+  const isDone = status === "fixed" || status === "failed" || !s.running;
+  for (const name of ["reproduce", "fix", "validate"]) {
+    const el = $(`#step-${name}`);
+    el.classList.remove("active", "done");
+    if (isDone && stepReached(ctx, name)) {
+      el.classList.add("done");
+    } else if (agent === name && phase === "running") {
+      el.classList.add("active");
+    } else if (stepReached(ctx, name)) {
+      el.classList.add("done");
+    }
+  }
+
+  // Current goal
+  const goal = ctx?.progress?.currentGoal;
+  $("#p-goal").innerHTML = goal ? `<strong>Current:</strong> ${esc(goal)}` : "";
+
+  // Stop / New buttons
+  toggle("#btn-stop", s.running, "inline-block");
+  toggle("#btn-new", !s.running, "inline-block");
+
+  // Error
+  if (s.error) {
+    $("#p-error").textContent = s.error;
+    toggle("#p-error", true);
+  } else {
+    toggle("#p-error", false);
+  }
+
+  // Result banner
+  if (!s.running && ctx) {
+    if (status === "fixed") {
+      showBanner("fixed", "Bug fixed successfully" +
+        (ctx.resolvedAtAttempt ? ` on attempt ${ctx.resolvedAtAttempt}` : ""));
+    } else if (status === "failed") {
+      showBanner("failed", "Pipeline failed — could not fix the bug");
+    } else if (ctx.reproduce && !ctx.reproduce.reproduced) {
+      showBanner("not-reproduced", "Bug could not be reproduced");
+    } else if (!s.running && !s.error) {
+      toggle("#banner", false);
+    }
+  } else {
+    toggle("#banner", false);
+  }
+
+  // Input
+  if (ctx) {
+    $("#i-url").textContent = ctx.input.app_url;
+    $("#i-dir").textContent = ctx.input.source_dir;
+    $("#i-desc").textContent = ctx.input.app_description || "—";
+    $("#i-trace").textContent = ctx.input.stack_trace;
+  }
+
+  // Activity log
+  if (ctx?.progress?.log) {
+    renderLog(ctx.progress.log, ctx.createdAt);
+  }
+
+  // State inspector
+  if (ctx) {
+    setText("#si-reproduce-pre", ctx.reproduce);
+    setText("#si-attempts-pre", ctx.attempts);
+    const { log, ...progressNoLog } = ctx.progress || {};
+    setText("#si-progress-pre", progressNoLog);
+    setText("#si-raw-pre", ctx);
+  }
+}
+
+function renderLog(entries, runStart) {
+  if (entries.length === lastLogLen) return;
+  const container = $("#log-container");
+  const frag = document.createDocumentFragment();
+
+  for (let i = lastLogLen; i < entries.length; i++) {
+    const e = entries[i];
+    const row = document.createElement("div");
+    row.className = "log-entry";
+
+    const time = document.createElement("span");
+    time.className = "log-time";
+    time.textContent = fmtTime(e.ts);
+
+    const agent = document.createElement("span");
+    agent.className = `log-agent ${e.agent}`;
+    agent.textContent = e.agent;
+
+    const msg = document.createElement("span");
+    msg.className = "log-msg";
+    msg.textContent = e.message;
+
+    row.append(time, agent, msg);
+
+    if (e.detail) {
+      const det = document.createElement("span");
+      det.className = "log-detail";
+      det.textContent = e.detail;
+      row.appendChild(det);
+    }
+    frag.appendChild(row);
+  }
+
+  container.appendChild(frag);
+  lastLogLen = entries.length;
+  container.scrollTop = container.scrollHeight;
+  $("#log-count").textContent = `(${entries.length})`;
+}
+
+function stepReached(ctx, name) {
+  if (!ctx) return false;
+  if (name === "reproduce") return !!ctx.reproduce;
+  if (name === "fix") return ctx.attempts?.some((a) => a.fix);
+  if (name === "validate") return ctx.attempts?.some((a) => a.validate);
+  return false;
+}
+
+function showBanner(cls, text) {
+  const b = $("#banner");
+  b.className = `result-banner ${cls}`;
+  b.textContent = text;
+  toggle("#banner", true);
+}
+
+// -- Actions ------------------------------------------------------------------
+
+$("#start-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#btn-start");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+  try {
+    await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stack_trace: $("#f-trace").value,
+        app_url: $("#f-url").value,
+        source_dir: $("#f-dir").value,
+        app_description: $("#f-desc").value,
+      }),
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Start Run";
+  }
+});
+
+$("#btn-stop").addEventListener("click", async () => {
+  if (!confirm("Stop the current run? This cannot be undone.")) return;
+  await fetch("/api/runs/current", { method: "DELETE" });
+  lastLogLen = 0;
+});
+
+$("#btn-new").addEventListener("click", () => {
+  lastLogLen = 0;
+  fetch("/api/runs/current", { method: "DELETE" }).then(poll);
+});
+
+// -- Helpers ------------------------------------------------------------------
+
+function toggle(sel, show, display = "") {
+  const el = typeof sel === "string" ? $(sel) : sel;
+  if (!el) return;
+  if (show) el.classList.remove("hidden"); else el.classList.add("hidden");
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function setText(sel, obj) {
+  $(sel).textContent = obj != null ? JSON.stringify(obj, null, 2) : "—";
+}
+
+function fmtTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-GB", { hour12: false });
+  } catch {
+    return iso;
+  }
+}
+
+// -- Boot ---------------------------------------------------------------------
+startPolling();
+</script>
+</body>
+</html>

@@ -76,6 +76,7 @@ class ReproduceResult:
     steps: list[dict]
     browser_logs: list[dict]
     notes: str
+    video_path: str | None = None   # absolute path to reproduce.mp4
 
 
 @dataclass
@@ -94,6 +95,7 @@ class ValidateResult:
     browser_logs: list[dict]
     new_errors: list[dict]
     notes: str
+    video_path: str | None = None   # absolute path to validate.mp4
 
 
 @dataclass
@@ -163,17 +165,26 @@ class PipelineContext:
 
     @classmethod
     def load(cls, run_id: str) -> "PipelineContext":
-        path = RUNS_DIR / f"{run_id}.json"
+        # Support both new layout (runs/<id>/run.json) and legacy flat (runs/<id>.json)
+        new_path = RUNS_DIR / run_id / "run.json"
+        legacy_path = RUNS_DIR / f"{run_id}.json"
+        path = new_path if new_path.exists() else legacy_path
         if not path.exists():
-            raise FileNotFoundError(f"No run found with id '{run_id}' at {path}")
+            raise FileNotFoundError(f"No run found with id '{run_id}'")
         return cls._from_dict(json.loads(path.read_text()))
 
     @classmethod
     def load_latest(cls) -> "PipelineContext":
-        files = sorted(RUNS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
+        # Check new layout dirs first, then legacy flat files
+        candidates: list[Path] = []
+        for d in RUNS_DIR.iterdir():
+            if d.is_dir() and (d / "run.json").exists():
+                candidates.append(d / "run.json")
+        candidates += list(RUNS_DIR.glob("*.json"))
+        if not candidates:
             raise FileNotFoundError("No runs found in runs/")
-        return cls._from_dict(json.loads(files[0].read_text()))
+        latest = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        return cls._from_dict(json.loads(latest.read_text()))
 
     # ------------------------------------------------------------------
     # Agent write methods
@@ -186,6 +197,7 @@ class PipelineContext:
         browser_logs: list[dict],
         error_message: str | None = None,
         notes: str = "",
+        video_path: str | None = None,
     ) -> None:
         self.reproduce = ReproduceResult(
             reproduced=reproduced,
@@ -193,6 +205,7 @@ class PipelineContext:
             steps=steps,
             browser_logs=browser_logs,
             notes=notes,
+            video_path=video_path,
         )
         self.save()
 
@@ -220,6 +233,7 @@ class PipelineContext:
         browser_logs: list[dict],
         new_errors: list[dict],
         notes: str = "",
+        video_path: str | None = None,
     ) -> None:
         """Write validate result into the current (last) attempt."""
         if not self.attempts:
@@ -233,6 +247,7 @@ class PipelineContext:
             browser_logs=browser_logs,
             new_errors=new_errors,
             notes=notes,
+            video_path=video_path,
         )
         self.save()
 
@@ -357,8 +372,14 @@ class PipelineContext:
         return len(self.attempts)
 
     @property
+    def run_dir(self) -> Path:
+        d = RUNS_DIR / self.run_id
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
     def path(self) -> Path:
-        return RUNS_DIR / f"{self.run_id}.json"
+        return self.run_dir / "run.json"
 
     # ------------------------------------------------------------------
     # Serialization
