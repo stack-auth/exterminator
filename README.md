@@ -59,7 +59,7 @@ npx convex dev
 
 # terminal 2 — Next.js dev server
 cd dashboard
-pnpm dev                # → http://localhost:3000
+pnpm dev                # → http://localhost:3002
 ```
 
 ### Architecture
@@ -105,14 +105,14 @@ Content-Type: application/json
 Point the browser script at this endpoint:
 
 ```html
-<script src="exterminator.js" data-endpoint="http://localhost:3000/api/events"></script>
+<script src="exterminator.js" data-endpoint="http://localhost:3002/api/events"></script>
 ```
 
 **Sandbox creation** — When the dashboard UI mounts an error card, it checks the `sandboxes` table in Convex. If no sandbox exists for that error, the frontend calls `/api/sandbox` with the error data. The route creates a Daytona sandbox, writes a record to Convex, and returns the `sandboxId` to the frontend. The AI pipeline (reproduce, fix, validate) runs fire-and-forget in the background, updating the sandbox status in Convex as it progresses. The frontend reactively picks up these status changes via Convex's real-time queries.
 
 ## Demo App
 
-A productivity app ("Planr") with a sidebar, working pages, and a few realistic bugs embedded for testing the full pipeline. The browser script is pre-wired to send errors to the dashboard at `localhost:3000`.
+A productivity app ("Planr") with a sidebar, working pages, and a few realistic bugs embedded for testing the full pipeline. The browser script is pre-wired to send errors to the dashboard at `localhost:3002`.
 
 ### Running
 
