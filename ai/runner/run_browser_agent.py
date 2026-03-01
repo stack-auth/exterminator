@@ -352,13 +352,14 @@ async def main():
         record_video_dir=str(run_dir),
         interaction_highlight_color="rgb(99, 102, 241)",  # indigo
         interaction_highlight_duration=1.5,
+        wait_for_network_idle_page_load_time=5.0,
     )
     session = BrowserSession(browser_profile=profile)
     agent = Agent(
         task=task,
         llm=llm,
         browser=session,
-        max_failures=3,
+        max_failures=5,
         output_model_schema=output_schema,    # enforces typed JSON output
         available_file_paths=source_files or None,  # lets agent read source files
         register_new_step_callback=on_step,
@@ -414,7 +415,8 @@ async def main():
         else:
             out = ValidateOutput(
                 fixed=False, verdict="inconclusive",
-                verdictReason="parse error", notes=raw or "",
+                verdictReason="parse error", originalErrorSeen=False,
+                notes=raw or "",
             )
 
     if agent_name == "reproduce":

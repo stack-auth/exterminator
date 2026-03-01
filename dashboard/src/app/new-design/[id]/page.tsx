@@ -123,45 +123,71 @@ function AgentBadge({ agent }: { agent: string }) {
   return <Badge label={agent} color={color} />;
 }
 
-function LogEntryRow({ entry }: { entry: LogEntry }) {
-  const isStart = entry.message.endsWith("started");
-  const isDone = entry.message.endsWith("finished");
-  const isError = entry.message.includes("error");
+interface LogGroup {
+  agent: string;
+  entries: LogEntry[];
+}
+
+function groupLog(log: LogEntry[]): LogGroup[] {
+  const groups: LogGroup[] = [];
+  for (const entry of log) {
+    const last = groups[groups.length - 1];
+    if (last && last.agent === entry.agent) {
+      last.entries.push(entry);
+    } else {
+      groups.push({ agent: entry.agent, entries: [entry] });
+    }
+  }
+  return groups;
+}
+
+function LogSection({ group }: { group: LogGroup }) {
+  const color = (agentColor[group.agent] ?? "gray") as "blue" | "orange" | "green" | "gray";
+  const dotColor: Record<string, string> = {
+    blue: "bg-blue-400/50",
+    orange: "bg-orange-400/50",
+    green: "bg-emerald-400/50",
+    gray: "bg-[#8b949e]/40",
+  };
 
   return (
-    <div className="group flex gap-3 py-2">
-      {/* Timeline */}
-      <div className="flex w-5 flex-col items-center pt-1.5">
-        <div
-          className={`h-1.5 w-1.5 rounded-full ring-1 ${
-            isError
-              ? "bg-red-400/60 ring-red-400/30"
-              : isDone
-                ? "bg-emerald-400/60 ring-emerald-400/30"
-                : isStart
-                  ? "bg-blue-400/60 ring-blue-400/30"
-                  : "bg-white/20 ring-white/10"
-          }`}
-        />
-        <div className="mt-1 flex-1 w-px bg-white/[0.06]" />
+    <div className="py-1.5">
+      {/* Section header */}
+      <div className="mb-1 flex items-center gap-2 px-0.5">
+        <div className={`h-1.5 w-1.5 rounded-full ${dotColor[color]}`} />
+        <AgentBadge agent={group.agent} />
+        <span className="text-[10px] tabular-nums text-[#484f58]">
+          {formatLogTime(group.entries[0].ts)}
+        </span>
       </div>
 
-      {/* Content */}
-      <div className="min-w-0 flex-1 pb-1">
-        <div className="mb-0.5 flex items-center gap-2">
-          <AgentBadge agent={entry.agent} />
-          <span className="text-[10px] tabular-nums text-[#484f58]">
-            {formatLogTime(entry.ts)}
-          </span>
-        </div>
-        <p className="text-xs leading-relaxed text-[#c9d1d9]">
-          {entry.message}
-        </p>
-        {entry.detail && (
-          <p className="mt-0.5 font-mono text-[11px] leading-relaxed text-[#6e7681]">
-            {entry.detail}
-          </p>
-        )}
+      {/* Compact rows */}
+      <div className="ml-3.5 border-l border-white/[0.06] pl-3">
+        {group.entries.map((entry, i) => {
+          const isStart = entry.message.endsWith("started");
+          const isDone = entry.message.endsWith("finished");
+          const isError = entry.message.includes("error");
+          return (
+            <div key={i} className="flex items-baseline gap-2 py-0.5">
+              <span className="shrink-0 text-[10px] tabular-nums text-[#484f58]">
+                {formatLogTime(entry.ts)}
+              </span>
+              <span
+                className={`min-w-0 truncate text-[11px] ${
+                  isError
+                    ? "text-red-400"
+                    : isDone
+                      ? "text-emerald-400"
+                      : isStart
+                        ? "text-blue-400/70"
+                        : "text-[#8b949e]"
+                }`}
+              >
+                {entry.message}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -229,6 +255,7 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevLogLen = useRef(0);
+  const autoStarted = useRef(false);
 
   const sandboxId = sandbox?.sandboxId ?? "";
 
@@ -298,14 +325,32 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
     );
   }
 
-  if (sandbox === null && !restarting) {
+  if (sandbox === null && !restarting && !autoStarted.current) {
+    autoStarted.current = true;
+    startSandbox(error._id, {
+      type: error.type,
+      message: error.message,
+      stack: error.stack,
+      filename: error.filename,
+      lineno: error.lineno,
+      colno: error.colno,
+      timestamp: error.timestamp,
+      pageUrl: error.pageUrl,
+      userAgent: error.userAgent,
+    });
+  }
+
+  if ((sandbox === null && !restarting) || (restarting)) {
     return (
       <GlassCard>
-        <CardHeader dot="gray" title="Autofix" />
+        <CardHeader dot="blue" title="Autofix" />
         <div className="px-4 py-5 text-center">
-          <p className="text-xs italic text-[#484f58]">
-            No AI analysis started for this error
-          </p>
+          <div className="flex items-center justify-center gap-2">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+            <p className="text-xs text-[#8b949e]">
+              Starting autofix&hellip;
+            </p>
+          </div>
         </div>
       </GlassCard>
     );
@@ -400,7 +445,7 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
             {status === "in_progress" ? "Waiting for activity…" : "No activity recorded"}
           </p>
         ) : (
-          log.map((entry, i) => <LogEntryRow key={i} entry={entry} />)
+          groupLog(log).map((group, i) => <LogSection key={i} group={group} />)
         )}
       </div>
 
@@ -482,6 +527,9 @@ export default function ErrorDetailPage({
   const [deleting, setDeleting] = useState(false);
   const [autofixExpanded, setAutofixExpanded] = useState(false);
   const [previewDropdownOpen, setPreviewDropdownOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logsContent, setLogsContent] = useState<string | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   if (error === undefined) {
     return (
@@ -581,6 +629,21 @@ export default function ErrorDetailPage({
                       >
                         <span className="h-1.5 w-1.5 rounded-full bg-purple-400/50" />
                         Show Debug
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setPreviewDropdownOpen(false);
+                          setLogsLoading(true);
+                          setLogsOpen(true);
+                          const res = await fetch(`/api/sandbox/${encodeURIComponent(sandbox.sandboxId)}/logs`);
+                          const data = await res.json();
+                          setLogsContent(data.logs ?? data.error ?? "No logs available");
+                          setLogsLoading(false);
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-xs text-[#c9d1d9] transition-colors duration-150 hover:bg-white/[0.06] hover:transition-none"
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-cyan-400/50" />
+                        Show Logs
                       </button>
                     </div>
                   </>
@@ -697,6 +760,52 @@ export default function ErrorDetailPage({
             </div>
           </div>
         </div>
+
+        {/* Logs modal */}
+        {logsOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+              onClick={() => setLogsOpen(false)}
+            />
+            <div
+              className="fixed inset-x-6 top-16 bottom-16 z-50 mx-auto flex max-w-3xl flex-col overflow-hidden rounded-2xl backdrop-blur-xl"
+              style={{
+                background: "linear-gradient(145deg, rgba(20,25,33,0.97), rgba(13,17,23,0.97))",
+                boxShadow: "0 0 0 1px rgba(255,255,255,0.08), 0 16px 48px rgba(0,0,0,0.6)",
+              }}
+            >
+              <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                <div className="flex items-center gap-3">
+                  <div className="h-2 w-2 rounded-full bg-cyan-400/40 shadow-[0_0_6px_rgba(34,211,238,0.2)]" />
+                  <p
+                    className="text-xs font-semibold uppercase"
+                    style={{ fontFamily: "var(--font-display), sans-serif", letterSpacing: "0.1em", color: "#8b949e" }}
+                  >
+                    Sandbox Logs
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLogsOpen(false)}
+                  className="cursor-pointer rounded-lg p-1 text-[#484f58] transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#8b949e] hover:transition-none"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+                {logsLoading ? (
+                  <p className="text-xs text-[#484f58]">Loading logs&hellip;</p>
+                ) : (
+                  <pre className="whitespace-pre-wrap font-mono text-[12px] leading-[1.7] text-[#8b949e]">
+                    {logsContent}
+                  </pre>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

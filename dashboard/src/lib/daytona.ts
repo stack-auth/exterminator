@@ -1,6 +1,6 @@
 import { Daytona } from "@daytonaio/sdk";
 import type { Sandbox } from "@daytonaio/sdk";
-import { randomUUID } from "crypto";
+// randomUUID no longer needed — the agent creates the run ID
 
 // ---------------------------------------------------------------------------
 // Types matching the RunContext schema from ai/runner/context.py
@@ -94,7 +94,6 @@ export interface ErrorEvent {
 // ---------------------------------------------------------------------------
 
 const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-2";
-const MAX_FIX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // Singleton Daytona client
@@ -112,35 +111,6 @@ function getDaytonaClient(): Daytona {
 // ---------------------------------------------------------------------------
 // Build RunContext JSON from an error event
 // ---------------------------------------------------------------------------
-
-function buildRunContext(event: ErrorEvent, runId: string): RunContext {
-  const stackTrace =
-    event.stack || `${event.message} at ${event.filename || "unknown"}:${event.lineno ?? 0}:${event.colno ?? 0}`;
-  const now = new Date().toISOString();
-
-  return {
-    runId,
-    createdAt: now,
-    status: "in_progress",
-    input: {
-      stack_trace: stackTrace,
-      app_url: "http://localhost:3000",
-      app_description: "",
-      source_dir: "/code",
-    },
-    reproduce: null,
-    attempts: [],
-    resolvedAtAttempt: null,
-    progress: {
-      currentAgent: null,
-      phase: "idle",
-      currentStep: null,
-      currentGoal: null,
-      lastUpdatedAt: now,
-      log: [],
-    },
-  };
-}
 
 function buildEnvVars(): Record<string, string> {
   const envVars: Record<string, string> = {};
@@ -160,39 +130,38 @@ function buildEnvVars(): Record<string, string> {
 }
 
 // ---------------------------------------------------------------------------
-// Start the demo app inside the sandbox
+// Start the entrypoint (agent server on 4000 + demo app on 3000)
 // ---------------------------------------------------------------------------
 
-async function startDemoApp(sandbox: Sandbox, envVars: Record<string, string>): Promise<void> {
-  console.log("[daytona] Starting demo app on port 3000...");
+async function startServices(sandbox: Sandbox, envVars: Record<string, string>): Promise<void> {
+  console.log("[daytona] Starting entrypoint (agent + demo app)...");
   await sandbox.process.executeCommand(
-    `nohup pnpm dev --port 3000 --host > /tmp/vite.log 2>&1 &`,
-    "/code",
+    `nohup /app/entrypoint.sh > /tmp/entrypoint.log 2>&1 &`,
+    "/app",
     envVars,
     10,
   );
 
-  // Poll until the server is ready (up to 15 seconds)
-  // Use a Node.js one-liner since curl may not be installed in the container
+  // Poll until the agent server (port 4000) is ready
   const pollScript = `node -e "
     const http = require('http');
     const start = Date.now();
     (function poll() {
-      if (Date.now() - start > 15000) { process.exit(1); }
-      http.get('http://localhost:3000', (res) => {
+      if (Date.now() - start > 30000) { process.exit(1); }
+      http.get('http://localhost:4000/api/runs/current', (res) => {
         if (res.statusCode < 500) process.exit(0);
         setTimeout(poll, 500);
       }).on('error', () => setTimeout(poll, 500));
     })();
   "`;
 
-  const pollResult = await sandbox.process.executeCommand(pollScript, "/code", envVars, 20);
+  const pollResult = await sandbox.process.executeCommand(pollScript, "/app", envVars, 35);
   if (pollResult.exitCode !== 0) {
-    const viteLog = await sandbox.process.executeCommand("cat /tmp/vite.log", "/code");
-    console.error(`[daytona] Vite log:\n${viteLog.result?.slice(-1000)}`);
-    throw new Error("Demo app failed to start on port 3000 within 15s");
+    const entryLog = await sandbox.process.executeCommand("cat /tmp/entrypoint.log", "/app");
+    console.error(`[daytona] Entrypoint log:\n${entryLog.result?.slice(-1500)}`);
+    throw new Error("Agent server failed to start on port 4000 within 30s");
   }
-  console.log("[daytona] Demo app ready on port 3000");
+  console.log("[daytona] Agent server ready on port 4000");
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +172,6 @@ export async function createSandboxForError(
   event: ErrorEvent,
 ): Promise<{ sandbox: Sandbox; sandboxId: string; runId: string }> {
   const daytona = getDaytonaClient();
-  const runId = randomUUID().slice(0, 8);
   const envVars = buildEnvVars();
 
   const sandbox = await daytona.create({
@@ -212,112 +180,119 @@ export async function createSandboxForError(
     autoStopInterval: 30,
   });
 
-  const ctx = buildRunContext(event, runId);
+  // Start the agent server + demo app via entrypoint
+  await startServices(sandbox, envVars);
 
-  // Create the run directory, then upload the context file
-  await sandbox.fs.createFolder(`/app/runner/runs/${runId}`, "0755");
-  const contextPath = `/app/runner/runs/${runId}/run.json`;
+  // Create a run via the agent's HTTP API
+  const stackTrace =
+    event.stack || `${event.message} at ${event.filename || "unknown"}:${event.lineno ?? 0}:${event.colno ?? 0}`;
+
+  const createRunScript = `
+const http = require("http");
+const body = JSON.stringify({
+  stack_trace: ${JSON.stringify(stackTrace)},
+  app_url: "http://localhost:3000",
+  app_description: ""
+});
+const req = http.request({
+  hostname: "localhost", port: 4000, path: "/api/runs",
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }
+}, function(res) {
+  var d = "";
+  res.on("data", function(c) { d += c; });
+  res.on("end", function() { console.log(d); process.exit(res.statusCode < 300 ? 0 : 1); });
+});
+req.on("error", function(e) { console.error(e.message); process.exit(1); });
+req.write(body);
+req.end();
+`;
+
   await sandbox.fs.uploadFile(
-    Buffer.from(JSON.stringify(ctx, null, 2)),
-    contextPath,
+    Buffer.from(createRunScript),
+    "/tmp/_create_run.js",
   );
 
+  const createRes = await sandbox.process.executeCommand(
+    "node /tmp/_create_run.js",
+    "/app",
+    envVars,
+    15,
+  );
+
+  if (createRes.exitCode !== 0) {
+    throw new Error(`Failed to create run via agent API: ${createRes.result}`);
+  }
+
+  const runData = JSON.parse(createRes.result?.trim() ?? "{}");
+  const runId = runData.runId as string;
+
+  console.log(`[daytona] Run created via agent API: ${runId}`);
   return { sandbox, sandboxId: sandbox.id, runId };
 }
 
 // ---------------------------------------------------------------------------
-// Run pipeline (long — reproduce then fix/validate loop)
+// Run pipeline — polls the agent API for status updates
 //
-// Takes an `onStatus` callback so the caller can persist status transitions
-// (e.g. update Convex). The sandbox is intentionally NOT deleted so it can
-// be polled for results later.
+// The agent server handles the full reproduce → fix → validate loop internally.
+// We just poll GET /api/runs/current and forward status transitions to Convex.
 // ---------------------------------------------------------------------------
+
+const AGENT_POLL_INTERVAL_MS = 5000;
 
 export async function runPipeline(
   sandbox: Sandbox,
   runId: string,
   onStatus?: (status: "reproducing" | "fixing" | "fixed" | "failed") => void,
 ): Promise<void> {
-  const envVars = buildEnvVars();
+  let lastStatus = "";
 
-  // --- Stage 0: Start the demo app ---
-  await startDemoApp(sandbox, envVars);
+  // Poll by reading run.json directly from disk — avoids HTTP stdout truncation
+  const runJsonPath = `/app/runner/runs/${runId}/run.json`;
 
-  // --- Stage 1: Reproduce ---
-  onStatus?.("reproducing");
-  console.log(`[daytona] [${runId}] Running reproduce...`);
-  const reproduceResult = await sandbox.process.executeCommand(
-    `python3 run_browser_agent.py reproduce --run-id ${runId}`,
-    "/app/runner",
-    envVars,
-    300,
-  );
-  console.log(`[daytona] [${runId}] Reproduce exit code: ${reproduceResult.exitCode}`);
-  logCommandOutput(runId, "reproduce", reproduceResult.result);
+  for (;;) {
+    await new Promise((r) => setTimeout(r, AGENT_POLL_INTERVAL_MS));
 
-  const afterReproduce = await readContext(sandbox, runId);
-  if (!afterReproduce.reproduce?.reproduced) {
-    console.log(`[daytona] [${runId}] Could not reproduce error. Stopping.`);
-    onStatus?.("failed");
-    return;
-  }
+    let ctx: RunContext;
+    try {
+      const buf = await sandbox.fs.downloadFile(runJsonPath);
+      ctx = JSON.parse(buf.toString()) as RunContext;
+    } catch (err) {
+      console.error(`[daytona] [${runId}] Poll error:`, err);
+      continue;
+    }
 
-  // --- Stage 2: Fix → Validate loop ---
-  onStatus?.("fixing");
-  for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-    console.log(`[daytona] [${runId}] Fix attempt ${attempt}/${MAX_FIX_ATTEMPTS}...`);
+    // Map agent progress to Convex status updates
+    const agent = ctx.progress?.currentAgent;
+    const phase = ctx.progress?.phase;
 
-    const fixResult = await sandbox.process.executeCommand(
-      `python3 run_fix.py --run-id ${runId}`,
-      "/app/runner",
-      envVars,
-      300,
-    );
-    console.log(`[daytona] [${runId}] Fix exit code: ${fixResult.exitCode}`);
-    logCommandOutput(runId, `fix-${attempt}`, fixResult.result);
+    if (agent === "reproduce" && lastStatus !== "reproducing") {
+      lastStatus = "reproducing";
+      onStatus?.("reproducing");
+      console.log(`[daytona] [${runId}] Status: reproducing`);
+    } else if ((agent === "fix" || agent === "validate") && lastStatus !== "fixing") {
+      lastStatus = "fixing";
+      onStatus?.("fixing");
+      console.log(`[daytona] [${runId}] Status: fixing`);
+    }
 
-    console.log(`[daytona] [${runId}] Validating fix...`);
-    const validateResult = await sandbox.process.executeCommand(
-      `python3 run_browser_agent.py validate --run-id ${runId}`,
-      "/app/runner",
-      envVars,
-      300,
-    );
-    console.log(`[daytona] [${runId}] Validate exit code: ${validateResult.exitCode}`);
-    logCommandOutput(runId, `validate-${attempt}`, validateResult.result);
-
-    const afterValidate = await readContext(sandbox, runId);
-    if (afterValidate.status === "fixed") {
-      console.log(`[daytona] [${runId}] Fixed at attempt ${attempt}!`);
+    if (ctx.status === "fixed") {
+      console.log(`[daytona] [${runId}] Fixed!`);
       onStatus?.("fixed");
       return;
     }
 
-    console.log(`[daytona] [${runId}] Not fixed after attempt ${attempt}`);
+    if (ctx.status === "failed" || (phase === "done" && ctx.status !== "fixed")) {
+      console.log(`[daytona] [${runId}] Failed or done without fix`);
+      onStatus?.("failed");
+      return;
+    }
+
+    // If the agent is no longer active and status is not terminal, it's done
+    if (phase === "done" || phase === "error") {
+      console.log(`[daytona] [${runId}] Pipeline ended with phase: ${phase}`);
+      onStatus?.(ctx.status === "fixed" ? "fixed" : "failed");
+      return;
+    }
   }
-
-  console.log(`[daytona] [${runId}] Exhausted ${MAX_FIX_ATTEMPTS} attempts.`);
-  onStatus?.("failed");
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function readContext(sandbox: Sandbox, runId: string): Promise<RunContext> {
-  // Try the directory layout first (runs/{runId}/run.json), fall back to flat file
-  try {
-    const buf = await sandbox.fs.downloadFile(`/app/runner/runs/${runId}/run.json`);
-    return JSON.parse(buf.toString()) as RunContext;
-  } catch {
-    // Fallback to flat file for robustness
-    const buf = await sandbox.fs.downloadFile(`/app/runner/runs/${runId}.json`);
-    return JSON.parse(buf.toString()) as RunContext;
-  }
-}
-
-function logCommandOutput(runId: string, stage: string, output: string | undefined): void {
-  if (!output) return;
-  const tail = output.slice(-500);
-  console.log(`[daytona] [${runId}] [${stage}] output (last 500 chars):\n${tail}`);
 }
