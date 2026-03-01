@@ -87,6 +87,19 @@ function ErrorCard({
               >
                 {errorLabel(err.type)}
               </span>
+              {sandbox && (
+                <span
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                    sandbox.status === "fixed"
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : sandbox.status === "failed"
+                        ? "bg-red-500/15 text-red-400"
+                        : "bg-blue-500/15 text-blue-400"
+                  }`}
+                >
+                  {sandbox.status}
+                </span>
+              )}
             </div>
             <p className="text-sm font-medium text-[#e6edf3] truncate leading-snug">
               {err.message}

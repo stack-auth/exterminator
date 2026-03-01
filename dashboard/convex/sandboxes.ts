@@ -40,3 +40,13 @@ export const getByErrorId = query({
       .first();
   },
 });
+
+export const getBySandboxId = query({
+  args: { sandboxId: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("sandboxes")
+      .withIndex("by_sandboxId", (q) => q.eq("sandboxId", args.sandboxId))
+      .first();
+  },
+});
