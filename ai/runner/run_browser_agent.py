@@ -349,6 +349,8 @@ async def main():
     session = BrowserSession(
         record_video_dir=str(run_dir),
         headless=True,
+        interaction_highlight_color="rgb(99, 102, 241)",  # indigo
+        interaction_highlight_duration=1.5,
     )
     agent = Agent(
         task=task,
