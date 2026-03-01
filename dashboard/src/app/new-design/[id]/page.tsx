@@ -1,9 +1,20 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useError, useDeleteError, type ErrorId } from "@/sdk/errors";
+import { useMutation } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import {
+  useSandbox,
+  startSandbox,
+  pollSandboxStatus,
+  type PollResponse,
+  type LogEntry,
+} from "@/sdk/sandbox";
+
+const POLL_INTERVAL_MS = 3000;
 
 function formatDate(ts: number): string {
   const d = new Date(ts);
@@ -23,16 +34,29 @@ function formatDate(ts: number): string {
   );
 }
 
+function formatLogTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
 function Badge({
   label,
   color,
 }: {
   label: string;
-  color: "red" | "orange";
+  color: "red" | "orange" | "green" | "blue" | "gray";
 }) {
   const styles: Record<string, string> = {
     red: "bg-red-500/15 text-red-400 ring-red-500/20",
     orange: "bg-orange-500/15 text-orange-400 ring-orange-500/20",
+    green: "bg-emerald-500/15 text-emerald-400 ring-emerald-500/20",
+    blue: "bg-blue-500/15 text-blue-400 ring-blue-500/20",
+    gray: "bg-white/[0.06] text-[#8b949e] ring-white/[0.08]",
   };
   return (
     <span
@@ -88,6 +112,363 @@ function StackTrace({ stack }: { stack?: string }) {
   );
 }
 
+const agentColor: Record<string, string> = {
+  reproduce: "blue",
+  fix: "orange",
+  validate: "green",
+};
+
+function AgentBadge({ agent }: { agent: string }) {
+  const color = (agentColor[agent] ?? "gray") as "blue" | "orange" | "green" | "gray";
+  return <Badge label={agent} color={color} />;
+}
+
+function LogEntryRow({ entry }: { entry: LogEntry }) {
+  const isStart = entry.message.endsWith("started");
+  const isDone = entry.message.endsWith("finished");
+  const isError = entry.message.includes("error");
+
+  return (
+    <div className="group flex gap-3 py-2">
+      {/* Timeline */}
+      <div className="flex w-5 flex-col items-center pt-1.5">
+        <div
+          className={`h-1.5 w-1.5 rounded-full ring-1 ${
+            isError
+              ? "bg-red-400/60 ring-red-400/30"
+              : isDone
+                ? "bg-emerald-400/60 ring-emerald-400/30"
+                : isStart
+                  ? "bg-blue-400/60 ring-blue-400/30"
+                  : "bg-white/20 ring-white/10"
+          }`}
+        />
+        <div className="mt-1 flex-1 w-px bg-white/[0.06]" />
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1 pb-1">
+        <div className="mb-0.5 flex items-center gap-2">
+          <AgentBadge agent={entry.agent} />
+          <span className="text-[10px] tabular-nums text-[#484f58]">
+            {formatLogTime(entry.ts)}
+          </span>
+        </div>
+        <p className="text-xs leading-relaxed text-[#c9d1d9]">
+          {entry.message}
+        </p>
+        {entry.detail && (
+          <p className="mt-0.5 font-mono text-[11px] leading-relaxed text-[#6e7681]">
+            {entry.detail}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type ErrorDoc = {
+  _id: ErrorId;
+  type: "error" | "unhandledrejection";
+  message: string;
+  stack?: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  timestamp: number;
+  pageUrl: string;
+  userAgent: string;
+};
+
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      {children}
+      {open && (
+        <div
+          className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl px-3 py-2 text-[11px] leading-relaxed text-[#c9d1d9] backdrop-blur-xl"
+          style={{
+            background: "linear-gradient(145deg, rgba(30,35,45,0.95), rgba(20,25,33,0.95))",
+            boxShadow: "0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.5)",
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STATUS_TOOLTIPS: Record<string, string> = {
+  creating: "Daytona VM is being provisioned. The sandbox image is being pulled and a fresh container is starting.",
+  reproducing: "VM is ready. The reproduce agent is navigating the app in a headless browser to trigger the error.",
+  fixing: "Error reproduced. The fix agent is analyzing the code and applying patches in the sandbox.",
+  fixed: "Fix validated. The validate agent confirmed the error no longer occurs after the patch.",
+  failed: "Pipeline failed. Either the error couldn't be reproduced, or all fix attempts were exhausted.",
+};
+
+function statusLabel(convexStatus: string, phase: string): { label: string; tooltip: string } {
+  if (convexStatus === "fixed") return { label: "Fixed", tooltip: STATUS_TOOLTIPS.fixed };
+  if (convexStatus === "failed") return { label: "Failed", tooltip: STATUS_TOOLTIPS.failed };
+  if (convexStatus === "creating" || phase === "idle") return { label: "Starting", tooltip: STATUS_TOOLTIPS.creating };
+  if (convexStatus === "reproducing") return { label: "Reproducing", tooltip: STATUS_TOOLTIPS.reproducing };
+  if (convexStatus === "fixing") return { label: "Fixing", tooltip: STATUS_TOOLTIPS.fixing };
+  return { label: "Running", tooltip: "Pipeline is active." };
+}
+
+function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc; expanded: boolean; onToggleExpand: () => void }) {
+  const sandbox = useSandbox(error._id);
+  const removeSandbox = useMutation(api.sandboxes.remove);
+  const [pollResult, setPollResult] = useState<PollResponse | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevLogLen = useRef(0);
+
+  const sandboxId = sandbox?.sandboxId ?? "";
+
+  const startPolling = useCallback(() => {
+    if (!sandboxId || intervalRef.current) return;
+
+    async function poll() {
+      const result = await pollSandboxStatus(sandboxId);
+      setPollResult(result);
+
+      const logLen = result.data?.progress.log.length ?? 0;
+      if (logLen > prevLogLen.current) {
+        prevLogLen.current = logLen;
+        requestAnimationFrame(() => {
+          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+        });
+      }
+
+      if (result.status === "completed" || result.status === "failed") {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      }
+    }
+
+    poll();
+    intervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
+  }, [sandboxId]);
+
+  if (sandboxId && !intervalRef.current && !restarting) {
+    startPolling();
+  }
+
+  const handleRestart = async () => {
+    if (!sandbox) return;
+    setRestarting(true);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setPollResult(null);
+    prevLogLen.current = 0;
+    await removeSandbox({ id: sandbox._id });
+    await startSandbox(error._id, {
+      type: error.type,
+      message: error.message,
+      stack: error.stack,
+      filename: error.filename,
+      lineno: error.lineno,
+      colno: error.colno,
+      timestamp: error.timestamp,
+      pageUrl: error.pageUrl,
+      userAgent: error.userAgent,
+    });
+    setRestarting(false);
+  };
+
+  if (sandbox === undefined) {
+    return (
+      <GlassCard>
+        <CardHeader dot="gray" title="Autofix" />
+        <div className="px-4 py-4">
+          <p className="text-xs text-[#484f58]">Loading&hellip;</p>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  if (sandbox === null && !restarting) {
+    return (
+      <GlassCard>
+        <CardHeader dot="gray" title="Autofix" />
+        <div className="px-4 py-5 text-center">
+          <p className="text-xs italic text-[#484f58]">
+            No AI analysis started for this error
+          </p>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  const convexStatus = sandbox?.status ?? "creating";
+  const progress = pollResult?.data?.progress;
+  const log = progress?.log ?? [];
+  const status = pollResult?.status ?? "in_progress";
+  const phase = progress?.phase ?? "idle";
+  const currentAgent = progress?.currentAgent;
+  const currentGoal = progress?.currentGoal;
+  const { label: statusLabelText, tooltip: statusTooltip } = statusLabel(convexStatus, phase);
+
+  return (
+    <GlassCard>
+      <CardHeader dot={status === "completed" ? "green" : status === "failed" ? "red" : "blue"} title="Autofix">
+        <div className="ml-auto flex items-center gap-2">
+          {/* Restart button */}
+          <button
+            onClick={handleRestart}
+            disabled={restarting}
+            className="cursor-pointer rounded-lg p-1 text-[#484f58] transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#8b949e] hover:transition-none disabled:cursor-not-allowed disabled:opacity-50"
+            title="Restart analysis on a new VM"
+          >
+            <svg
+              className={`h-3.5 w-3.5 ${restarting ? "animate-spin" : ""}`}
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M1 8a7 7 0 0 1 12.45-4.35" />
+              <path d="M15 8a7 7 0 0 1-12.45 4.35" />
+              <path d="M13.45 3.65L13.45 1M13.45 3.65L16 3.65" />
+              <path d="M2.55 12.35L2.55 15M2.55 12.35L0 12.35" />
+            </svg>
+          </button>
+
+          {/* Expand/collapse button */}
+          <button
+            onClick={onToggleExpand}
+            className="cursor-pointer rounded-lg p-1 text-[#484f58] transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#8b949e] hover:transition-none"
+            title={expanded ? "Collapse" : "Expand"}
+          >
+            {expanded ? (
+              <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 1H1v5M10 15h5v-5M1 1l5 5M15 15l-5-5" />
+              </svg>
+            ) : (
+              <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 1h5v5M6 15H1v-5M15 1l-5 5M1 15l5-5" />
+              </svg>
+            )}
+          </button>
+
+          {status === "in_progress" && (
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+          )}
+          <Tooltip text={statusTooltip}>
+            <span className="cursor-help">
+              <Badge
+                label={statusLabelText}
+                color={status === "completed" ? "green" : status === "failed" ? "red" : "blue"}
+              />
+            </span>
+          </Tooltip>
+        </div>
+      </CardHeader>
+
+      {/* Current action */}
+      {currentAgent && currentGoal && status === "in_progress" && (
+        <div
+          className="flex items-center gap-2 px-4 py-2"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+        >
+          <AgentBadge agent={currentAgent} />
+          <p className="truncate text-xs text-[#8b949e]">{currentGoal}</p>
+        </div>
+      )}
+
+      {/* Log */}
+      <div
+        ref={scrollRef}
+        className={`overflow-y-auto px-4 py-2 transition-[max-height] duration-300 ease-in-out ${expanded ? "max-h-[70vh]" : "max-h-72"}`}
+        style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}
+      >
+        {log.length === 0 ? (
+          <p className="py-4 text-center text-xs italic text-[#484f58]">
+            {status === "in_progress" ? "Waiting for activity…" : "No activity recorded"}
+          </p>
+        ) : (
+          log.map((entry, i) => <LogEntryRow key={i} entry={entry} />)
+        )}
+      </div>
+
+      {/* Footer with count */}
+      {log.length > 0 && (
+        <div
+          className="px-4 py-2"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}
+        >
+          <p className="text-[10px] tabular-nums text-[#484f58]">
+            {log.length} event{log.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
+const glassStyle = {
+  background: "linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))",
+  boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 24px rgba(0,0,0,0.25)",
+};
+
+function GlassCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-2xl backdrop-blur-xl" style={glassStyle}>
+      {children}
+    </div>
+  );
+}
+
+function CardHeader({
+  dot,
+  title,
+  children,
+}: {
+  dot: "blue" | "green" | "red" | "purple" | "gray";
+  title: string;
+  children?: React.ReactNode;
+}) {
+  const dotStyles: Record<string, string> = {
+    blue: "bg-blue-400/40 shadow-[0_0_6px_rgba(96,165,250,0.2)]",
+    green: "bg-emerald-400/40 shadow-[0_0_6px_rgba(52,211,153,0.2)]",
+    red: "bg-red-400/40 shadow-[0_0_6px_rgba(248,113,113,0.2)]",
+    purple: "bg-purple-400/40 shadow-[0_0_6px_rgba(167,139,250,0.2)]",
+    gray: "bg-[#8b949e]/40 shadow-[0_0_6px_rgba(139,148,158,0.2)]",
+  };
+  return (
+    <div
+      className="flex items-center gap-3 px-4 py-2.5"
+      style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+    >
+      <div className={`h-2 w-2 rounded-full ${dotStyles[dot]}`} />
+      <p
+        className="text-xs font-semibold uppercase"
+        style={{
+          fontFamily: "var(--font-display), sans-serif",
+          letterSpacing: "0.1em",
+          color: "#8b949e",
+        }}
+      >
+        {title}
+      </p>
+      {children}
+    </div>
+  );
+}
+
 export default function ErrorDetailPage({
   params,
 }: {
@@ -96,8 +477,11 @@ export default function ErrorDetailPage({
   const { id } = use(params);
   const error = useError(id as ErrorId);
   const deleteError = useDeleteError();
+  const sandbox = useSandbox(id as ErrorId);
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
+  const [autofixExpanded, setAutofixExpanded] = useState(false);
+  const [previewDropdownOpen, setPreviewDropdownOpen] = useState(false);
 
   if (error === undefined) {
     return (
@@ -111,20 +495,22 @@ export default function ErrorDetailPage({
     return (
       <div className="min-h-screen px-6 pb-16 pt-10">
         <div className="mx-auto max-w-3xl">
-          <div className="rounded-2xl bg-white/[0.03] p-5 ring-1 ring-white/[0.06] backdrop-blur-xl">
-            <h1 className="mb-1 text-sm font-semibold text-[#e6edf3]">
-              Error not found
-            </h1>
-            <p className="mb-4 text-sm text-[#8b949e]">
-              This error may have been deleted or the link is invalid.
-            </p>
-            <Link
-              href="/new-design"
-              className="text-sm font-medium text-blue-400 transition-colors duration-150 hover:text-blue-300 hover:transition-none"
-            >
-              &larr; Back to all errors
-            </Link>
-          </div>
+          <GlassCard>
+            <div className="p-5">
+              <h1 className="mb-1 text-sm font-semibold text-[#e6edf3]">
+                Error not found
+              </h1>
+              <p className="mb-4 text-sm text-[#8b949e]">
+                This error may have been deleted or the link is invalid.
+              </p>
+              <Link
+                href="/new-design"
+                className="text-sm font-medium text-blue-400 transition-colors duration-150 hover:text-blue-300 hover:transition-none"
+              >
+                &larr; Back to all errors
+              </Link>
+            </div>
+          </GlassCard>
         </div>
       </div>
     );
@@ -152,31 +538,78 @@ export default function ErrorDetailPage({
           >
             &larr; All errors
           </Link>
-          <button
-            onClick={async () => {
-              setDeleting(true);
-              await deleteError({ id: error._id });
-              router.push("/new-design");
-            }}
-            disabled={deleting}
-            className="cursor-pointer rounded-xl bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 ring-1 ring-red-500/20 transition-colors duration-150 hover:bg-red-500/20 hover:transition-none disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {deleting ? "Deleting…" : "Delete"}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Preview segment button */}
+            {sandbox?.sandboxId && (
+              <div className="relative flex">
+                <button
+                  onClick={async () => {
+                    const res = await fetch(`/api/sandbox/${encodeURIComponent(sandbox.sandboxId)}/preview?port=3000`);
+                    const data = await res.json();
+                    if (data.url) window.open(data.url, "_blank");
+                  }}
+                  className="cursor-pointer rounded-l-xl bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-400 ring-1 ring-blue-500/20 transition-colors duration-150 hover:bg-blue-500/20 hover:transition-none"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => setPreviewDropdownOpen((v) => !v)}
+                  className="cursor-pointer rounded-r-xl border-l border-blue-500/20 bg-blue-500/10 px-1.5 py-1.5 text-blue-400 ring-1 ring-blue-500/20 transition-colors duration-150 hover:bg-blue-500/20 hover:transition-none"
+                >
+                  <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 5l3 3 3-3" />
+                  </svg>
+                </button>
+                {previewDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPreviewDropdownOpen(false)} />
+                    <div
+                      className="absolute right-0 top-full z-50 mt-1.5 w-36 overflow-hidden rounded-xl py-1 backdrop-blur-xl"
+                      style={{
+                        background: "linear-gradient(145deg, rgba(30,35,45,0.95), rgba(20,25,33,0.95))",
+                        boxShadow: "0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.5)",
+                      }}
+                    >
+                      <button
+                        onClick={async () => {
+                          setPreviewDropdownOpen(false);
+                          const res = await fetch(`/api/sandbox/${encodeURIComponent(sandbox.sandboxId)}/preview?port=4000`);
+                          const data = await res.json();
+                          if (data.url) window.open(data.url, "_blank");
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-xs text-[#c9d1d9] transition-colors duration-150 hover:bg-white/[0.06] hover:transition-none"
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-purple-400/50" />
+                        Show Debug
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                setDeleting(true);
+                await deleteError({ id: error._id });
+                router.push("/new-design");
+              }}
+              disabled={deleting}
+              className="cursor-pointer rounded-xl bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 ring-1 ring-red-500/20 transition-colors duration-150 hover:bg-red-500/20 hover:transition-none disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
         </nav>
 
         {/* Two-column layout */}
-        <div className="grid gap-4 md:grid-cols-2">
-          {/* Left column — main content */}
-          <div className="flex flex-col gap-4">
+        <div className={`grid gap-4 transition-all duration-300 ease-in-out ${autofixExpanded ? "md:grid-cols-1" : "md:grid-cols-2"}`}>
+          {/* Left column */}
+          <div
+            className={`flex flex-col gap-4 transition-all duration-300 ease-in-out ${autofixExpanded ? "pointer-events-none max-h-0 overflow-hidden opacity-0" : "opacity-100"}`}
+          >
             {/* Header card */}
-            <div
-              className="overflow-hidden rounded-2xl backdrop-blur-xl"
-              style={{
-                background: "linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 24px rgba(0,0,0,0.25), 0 0 50px rgba(96,165,250,0.03)",
-              }}
-            >
+            <GlassCard>
               <div
                 className="px-5 py-4"
                 style={{
@@ -200,7 +633,6 @@ export default function ErrorDetailPage({
                 </h1>
               </div>
 
-              {/* Inline meta — 2x2 grid */}
               <div className="grid grid-cols-2 gap-px" style={{ background: "rgba(255,255,255,0.04)" }}>
                 <div className="bg-[#0d1117] px-5 py-3">
                   <MetaItem label="Source" value={source} />
@@ -209,116 +641,59 @@ export default function ErrorDetailPage({
                   <MetaItem label="Location" value={location} />
                 </div>
               </div>
-            </div>
+            </GlassCard>
 
             {/* Stack Trace */}
-            <div
-              className="overflow-hidden rounded-2xl backdrop-blur-xl"
-              style={{
-                background: "linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 24px rgba(0,0,0,0.25)",
-              }}
-            >
-              <div
-                className="flex items-center gap-3 px-5 py-2.5"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-              >
-                <div className="h-2 w-2 rounded-full bg-[#8b949e]/40 shadow-[0_0_6px_rgba(139,148,158,0.2)]" />
-                <p
-                  className="text-xs font-semibold uppercase"
-                  style={{
-                    fontFamily: "var(--font-display), sans-serif",
-                    letterSpacing: "0.1em",
-                    color: "#8b949e",
-                  }}
-                >
-                  Stack Trace
-                </p>
-              </div>
+            <GlassCard>
+              <CardHeader dot="gray" title="Stack Trace" />
               <StackTrace stack={error.stack} />
-            </div>
+            </GlassCard>
           </div>
 
-          {/* Right column — sidebar info */}
+          {/* Right column */}
           <div className="flex flex-col gap-4">
-            {/* Page URL */}
-            <div
-              className="overflow-hidden rounded-2xl backdrop-blur-xl"
-              style={{
-                background: "linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 24px rgba(0,0,0,0.25)",
-              }}
-            >
-              <div
-                className="flex items-center gap-3 px-4 py-2.5"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-              >
-                <div className="h-2 w-2 rounded-full bg-blue-400/40 shadow-[0_0_6px_rgba(96,165,250,0.2)]" />
-                <p
-                  className="text-xs font-semibold uppercase"
-                  style={{
-                    fontFamily: "var(--font-display), sans-serif",
-                    letterSpacing: "0.1em",
-                    color: "#8b949e",
-                  }}
-                >
-                  Page
-                </p>
-              </div>
-              <div className="px-4 py-3">
-                <p className="break-all font-mono text-xs leading-relaxed text-[#c9d1d9]">
-                  {error.pageUrl}
-                </p>
-              </div>
-            </div>
+            {/* Autofix */}
+            <ActivityLogCard
+              error={error}
+              expanded={autofixExpanded}
+              onToggleExpand={() => setAutofixExpanded((v) => !v)}
+            />
 
-            {/* User Agent */}
+            {/* Other cards — fade out when expanded */}
             <div
-              className="overflow-hidden rounded-2xl backdrop-blur-xl"
-              style={{
-                background: "linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 24px rgba(0,0,0,0.25)",
-              }}
+              className={`flex flex-col gap-4 transition-all duration-300 ease-in-out ${autofixExpanded ? "pointer-events-none max-h-0 overflow-hidden opacity-0" : "opacity-100"}`}
             >
-              <div
-                className="flex items-center gap-3 px-4 py-2.5"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-              >
-                <div className="h-2 w-2 rounded-full bg-purple-400/40 shadow-[0_0_6px_rgba(167,139,250,0.2)]" />
-                <p
-                  className="text-xs font-semibold uppercase"
-                  style={{
-                    fontFamily: "var(--font-display), sans-serif",
-                    letterSpacing: "0.1em",
-                    color: "#8b949e",
-                  }}
-                >
-                  Environment
-                </p>
-              </div>
-              <div className="px-4 py-3">
-                <p className="break-all font-mono text-[11px] leading-relaxed text-[#8b949e]">
-                  {error.userAgent}
-                </p>
-              </div>
-            </div>
+              {/* Page URL */}
+              <GlassCard>
+                <CardHeader dot="blue" title="Page" />
+                <div className="px-4 py-3">
+                  <p className="break-all font-mono text-xs leading-relaxed text-[#c9d1d9]">
+                    {error.pageUrl}
+                  </p>
+                </div>
+              </GlassCard>
 
-            {/* Error ID */}
-            <div
-              className="overflow-hidden rounded-2xl backdrop-blur-xl"
-              style={{
-                background: "linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 24px rgba(0,0,0,0.25)",
-              }}
-            >
-              <div className="px-4 py-3">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-[#484f58]">
-                  ID
-                </span>
-                <p className="mt-0.5 font-mono text-[11px] text-[#6e7681]">
-                  {error._id}
-                </p>
-              </div>
+              {/* User Agent */}
+              <GlassCard>
+                <CardHeader dot="purple" title="Environment" />
+                <div className="px-4 py-3">
+                  <p className="break-all font-mono text-[11px] leading-relaxed text-[#8b949e]">
+                    {error.userAgent}
+                  </p>
+                </div>
+              </GlassCard>
+
+              {/* Error ID */}
+              <GlassCard>
+                <div className="px-4 py-3">
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[#484f58]">
+                    ID
+                  </span>
+                  <p className="mt-0.5 font-mono text-[11px] text-[#6e7681]">
+                    {error._id}
+                  </p>
+                </div>
+              </GlassCard>
             </div>
           </div>
         </div>

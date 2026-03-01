@@ -27,37 +27,39 @@ function Starfield() {
 
   const stars = useMemo(() => {
     const rng = seededRandom(42);
+    const r = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
     return Array.from({ length: 120 }, (_, i) => {
-      const x = rng() * 100;
-      const y = rng() * 100;
-      const size = rng() * 2 + 0.5;
-      const opacity = rng() * 0.5 + 0.1;
-      const delay = rng() * 8;
-      const duration = rng() * 8 + 12;
+      const x = r(rng() * 100);
+      const y = r(rng() * 100);
+      const size = r(rng() * 2 + 0.5);
+      const opacity = r(rng() * 0.5 + 0.1);
+      const delay = r(rng() * 8);
+      const duration = r(rng() * 8 + 12);
       const driftAngle = rng() * Math.PI * 2;
       const driftDist = rng() * 6 + 2;
-      const dx = Math.cos(driftAngle) * driftDist;
-      const dy = Math.sin(driftAngle) * driftDist;
+      const dx = r(Math.cos(driftAngle) * driftDist);
+      const dy = r(Math.sin(driftAngle) * driftDist);
       return { id: i, x, y, size, opacity, delay, duration, dx, dy };
     });
   }, []);
 
   const streaks = useMemo(() => {
     const rng = seededRandom(99);
+    const r = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
     return Array.from({ length: 50 }, (_, i) => {
       let x: number, y: number;
       do {
-        x = rng() * 100;
-        y = rng() * 100;
+        x = r(rng() * 100);
+        y = r(rng() * 100);
       } while ((x > 20 && x < 80 && y > 20 && y < 80) || y < 25);
       const dx = x - 50;
       const dy = y - 50;
-      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-      const length = rng() * 80 + 40;
-      const width = rng() * 1.5 + 0.5;
-      const opacity = rng() * 0.2 + 0.08;
-      const delay = rng() * 10;
-      const duration = rng() * 8 + 10;
+      const angle = r(Math.atan2(dy, dx) * (180 / Math.PI));
+      const length = r(rng() * 80 + 40);
+      const width = r(rng() * 1.5 + 0.5);
+      const opacity = r(rng() * 0.2 + 0.08);
+      const delay = r(rng() * 10);
+      const duration = r(rng() * 8 + 10);
       return { id: i, x, y, angle, length, width, opacity, delay, duration };
     });
   }, []);

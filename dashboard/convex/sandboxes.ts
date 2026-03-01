@@ -31,6 +31,13 @@ export const updateStatus = mutation({
   },
 });
 
+export const remove = mutation({
+  args: { id: v.id("sandboxes") },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.id);
+  },
+});
+
 export const getByErrorId = query({
   args: { errorId: v.id("errors") },
   handler: async (ctx, args) => {
