@@ -27,8 +27,10 @@ RUN pnpm install --frozen-lockfile || pnpm install
 COPY runner/ /app/runner
 COPY agent/ /app/agent
 
-# --- Demo app (served on port 3000) ---
+# --- Demo app (Vite dev server on port 3000) ---
 RUN git clone https://github.com/stack-auth/exterminator-demo-repo.git /code
+WORKDIR /code
+RUN pnpm install
 
 WORKDIR /app
 

@@ -14,9 +14,9 @@ docker run -p 4000:4000 -p 3000:3000 \
 
 The container starts two services:
 
-- **Port 3000** — demo app served from `/code`
+- **Port 3000** — Taskflow demo app (Vite dev server) from `/code`
   ([stack-auth/exterminator-demo-repo](https://github.com/stack-auth/exterminator-demo-repo),
-  cloned at build time)
+  cloned + `pnpm install` at build time)
 - **Port 4000** — control interface + REST API
 
 The control interface on port **4000** exposes:
@@ -76,7 +76,7 @@ Override with the `RUNNER_DIR` environment variable if needed.
 |----------------|---------|------------------------------------------------------|
 | `/app/agent`   | Node.js | Express server + control UI + pipeline orchestrator  |
 | `/app/runner`  | Python  | Reproduce / fix / validate agents (browser-use, Claude CLI) |
-| `/code`        | —       | Demo app source (cloned from GitHub, served on :3000)|
+| `/code`        | Node.js | Taskflow demo app (Vite dev server on :3000)         |
 
 The image also ships with **Playwright + Chromium** and the **Claude CLI**
 pre-installed so the runner scripts work out of the box.
