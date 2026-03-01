@@ -83,104 +83,111 @@ function buildRunContext(event: ErrorEvent, runId: string): RunContext {
   };
 }
 
+function buildEnvVars(): Record<string, string> {
+  const envVars: Record<string, string> = {};
+  if (process.env.ANTHROPIC_API_KEY) {
+    envVars.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  }
+  if (process.env.APP_URL) {
+    envVars.APP_URL = process.env.APP_URL;
+  }
+  return envVars;
+}
+
 // ---------------------------------------------------------------------------
-// Pipeline orchestration
+// Create sandbox (quick — returns immediately with sandbox handle + IDs)
 // ---------------------------------------------------------------------------
 
-export async function startSandboxForError(event: ErrorEvent): Promise<void> {
+export async function createSandboxForError(
+  event: ErrorEvent,
+): Promise<{ sandbox: Sandbox; sandboxId: string; runId: string }> {
   const daytona = getDaytonaClient();
   const runId = randomUUID().slice(0, 8);
-  let sandbox: Sandbox | null = null;
+  const envVars = buildEnvVars();
 
-  try {
-    console.log(`[daytona] Creating sandbox for run ${runId}...`);
+  const sandbox = await daytona.create({
+    snapshot: SNAPSHOT_NAME,
+    envVars,
+    autoStopInterval: 30,
+  });
 
-    // Build env vars to pass into the sandbox
-    const envVars: Record<string, string> = {};
-    if (process.env.ANTHROPIC_API_KEY) {
-      envVars.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-    }
-    if (process.env.APP_URL) {
-      envVars.APP_URL = process.env.APP_URL;
-    }
+  const ctx = buildRunContext(event, runId);
+  const contextPath = `/app/runner/runs/${runId}.json`;
+  await sandbox.fs.uploadFile(
+    Buffer.from(JSON.stringify(ctx, null, 2)),
+    contextPath,
+  );
 
-    sandbox = await daytona.create({
-      snapshot: SNAPSHOT_NAME,
-      envVars,
-      autoStopInterval: 30,
-    });
+  return { sandbox, sandboxId: sandbox.id, runId };
+}
 
-    console.log(`[daytona] Sandbox created for run ${runId}`);
+// ---------------------------------------------------------------------------
+// Run pipeline (long — reproduce then fix/validate loop)
+//
+// Takes an `onStatus` callback so the caller can persist status transitions
+// (e.g. update Convex). The sandbox is intentionally NOT deleted so it can
+// be polled for results later.
+// ---------------------------------------------------------------------------
 
-    // Upload run context JSON
-    const ctx = buildRunContext(event, runId);
-    const contextPath = `/app/runner/runs/${runId}.json`;
-    await sandbox.fs.uploadFile(
-      Buffer.from(JSON.stringify(ctx, null, 2)),
-      contextPath,
-    );
+export async function runPipeline(
+  sandbox: Sandbox,
+  runId: string,
+  onStatus?: (status: "reproducing" | "fixing" | "fixed" | "failed") => void,
+): Promise<void> {
+  const envVars = buildEnvVars();
 
-    // --- Stage 1: Reproduce ---
-    console.log(`[daytona] [${runId}] Running reproduce...`);
-    const reproduceResult = await sandbox.process.executeCommand(
-      `python3 run_browser_agent.py reproduce --run-id ${runId}`,
+  // --- Stage 1: Reproduce ---
+  onStatus?.("reproducing");
+  console.log(`[daytona] [${runId}] Running reproduce...`);
+  const reproduceResult = await sandbox.process.executeCommand(
+    `python3 run_browser_agent.py reproduce --run-id ${runId}`,
+    "/app/runner",
+    envVars,
+    300,
+  );
+  console.log(`[daytona] [${runId}] Reproduce exit code: ${reproduceResult.exitCode}`);
+
+  const afterReproduce = await readContext(sandbox, runId);
+  if (!afterReproduce.reproduce?.reproduced) {
+    console.log(`[daytona] [${runId}] Could not reproduce error. Stopping.`);
+    onStatus?.("failed");
+    return;
+  }
+
+  // --- Stage 2: Fix → Validate loop ---
+  onStatus?.("fixing");
+  for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+    console.log(`[daytona] [${runId}] Fix attempt ${attempt}/${MAX_FIX_ATTEMPTS}...`);
+
+    const fixResult = await sandbox.process.executeCommand(
+      `python3 run_fix.py --run-id ${runId}`,
       "/app/runner",
       envVars,
       300,
     );
-    console.log(`[daytona] [${runId}] Reproduce exit code: ${reproduceResult.exitCode}`);
+    console.log(`[daytona] [${runId}] Fix exit code: ${fixResult.exitCode}`);
 
-    // Read back context to check if reproduced
-    const afterReproduce = await readContext(sandbox, runId);
-    if (!afterReproduce.reproduce?.reproduced) {
-      console.log(`[daytona] [${runId}] Could not reproduce error. Stopping.`);
+    console.log(`[daytona] [${runId}] Validating fix...`);
+    const validateResult = await sandbox.process.executeCommand(
+      `python3 run_browser_agent.py validate --run-id ${runId}`,
+      "/app/runner",
+      envVars,
+      300,
+    );
+    console.log(`[daytona] [${runId}] Validate exit code: ${validateResult.exitCode}`);
+
+    const afterValidate = await readContext(sandbox, runId);
+    if (afterValidate.status === "fixed") {
+      console.log(`[daytona] [${runId}] Fixed at attempt ${attempt}!`);
+      onStatus?.("fixed");
       return;
     }
 
-    // --- Stage 2: Fix → Validate loop ---
-    for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-      console.log(`[daytona] [${runId}] Fix attempt ${attempt}/${MAX_FIX_ATTEMPTS}...`);
-
-      // Fix
-      const fixResult = await sandbox.process.executeCommand(
-        `python3 run_fix.py --run-id ${runId}`,
-        "/app/runner",
-        envVars,
-        300,
-      );
-      console.log(`[daytona] [${runId}] Fix exit code: ${fixResult.exitCode}`);
-
-      // Validate
-      console.log(`[daytona] [${runId}] Validating fix...`);
-      const validateResult = await sandbox.process.executeCommand(
-        `python3 run_browser_agent.py validate --run-id ${runId}`,
-        "/app/runner",
-        envVars,
-        300,
-      );
-      console.log(`[daytona] [${runId}] Validate exit code: ${validateResult.exitCode}`);
-
-      // Check if fixed
-      const afterValidate = await readContext(sandbox, runId);
-      if (afterValidate.status === "fixed") {
-        console.log(`[daytona] [${runId}] Fixed at attempt ${attempt}!`);
-        return;
-      }
-
-      console.log(`[daytona] [${runId}] Not fixed after attempt ${attempt}`);
-    }
-
-    console.log(`[daytona] [${runId}] Exhausted ${MAX_FIX_ATTEMPTS} attempts.`);
-  } finally {
-    if (sandbox) {
-      try {
-        await daytona.delete(sandbox);
-        console.log(`[daytona] [${runId}] Sandbox deleted.`);
-      } catch (cleanupErr) {
-        console.error(`[daytona] [${runId}] Failed to delete sandbox:`, cleanupErr);
-      }
-    }
+    console.log(`[daytona] [${runId}] Not fixed after attempt ${attempt}`);
   }
+
+  console.log(`[daytona] [${runId}] Exhausted ${MAX_FIX_ATTEMPTS} attempts.`);
+  onStatus?.("failed");
 }
 
 // ---------------------------------------------------------------------------

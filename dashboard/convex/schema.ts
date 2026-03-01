@@ -13,4 +13,17 @@ export default defineSchema({
     pageUrl: v.string(),
     userAgent: v.string(),
   }).index("by_timestamp", ["timestamp"]),
+
+  sandboxes: defineTable({
+    errorId: v.id("errors"),
+    sandboxId: v.string(),
+    runId: v.string(),
+    status: v.union(
+      v.literal("creating"),
+      v.literal("reproducing"),
+      v.literal("fixing"),
+      v.literal("fixed"),
+      v.literal("failed"),
+    ),
+  }).index("by_errorId", ["errorId"]),
 });

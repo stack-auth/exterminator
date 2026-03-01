@@ -62,9 +62,38 @@ cd dashboard
 pnpm dev                # → http://localhost:3000
 ```
 
-### How it receives errors
+### Architecture
 
-The browser script POSTs captured errors to the dashboard's API route:
+```
+Browser Script                Dashboard (Next.js)               Daytona
+─────────────                 ───────────────────               ───────
+                    POST /api/events
+  capture error  ──────────────────────►  store in Convex
+                                          (errors table)
+                                                │
+                                                ▼
+                                          Dashboard UI
+                                          renders ErrorCard
+                                                │
+                                     POST /api/sandbox
+                                     { errorId, error }
+                                                │
+                                                ▼
+                                          create sandbox  ──────►  Daytona sandbox
+                                          store in Convex          created
+                                          (sandboxes table)
+                                                │
+                                          return sandboxId
+                                          to frontend
+                                                │
+                                          fire-and-forget  ─────►  run AI pipeline
+                                          runPipeline()            (reproduce → fix
+                                                │                   → validate)
+                                          status updates  ◄──────  pipeline progress
+                                          written to Convex
+```
+
+**Error ingestion** — The browser script captures uncaught errors and unhandled rejections, batches them, and POSTs to `/api/events`. This route only writes to Convex and returns immediately.
 
 ```
 POST /api/events
@@ -74,11 +103,12 @@ Content-Type: application/json
 ```
 
 Point the browser script at this endpoint:
+
 ```html
 <script src="exterminator.js" data-endpoint="http://localhost:3000/api/events"></script>
 ```
 
-The route stores the events in Convex, and the dashboard UI updates in real time.
+**Sandbox creation** — When the dashboard UI mounts an error card, it checks the `sandboxes` table in Convex. If no sandbox exists for that error, the frontend calls `/api/sandbox` with the error data. The route creates a Daytona sandbox, writes a record to Convex, and returns the `sandboxId` to the frontend. The AI pipeline (reproduce, fix, validate) runs fire-and-forget in the background, updating the sandbox status in Convex as it progresses. The frontend reactively picks up these status changes via Convex's real-time queries.
 
 ## Demo App
 
