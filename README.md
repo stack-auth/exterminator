@@ -5,6 +5,7 @@
 ```
 browser-script/   TypeScript → single JS bundle for <script> tags
 dashboard/         Next.js app + Convex DB — error monitoring UI
+demo/              Sample app with embedded bugs for end-to-end testing
 ai/                AI agent running in Docker
   agent/           Agent source, copied to /agent in the container
 ```
@@ -71,6 +72,32 @@ Point the browser script at this endpoint:
 ```
 
 The route stores the events in Convex, and the dashboard UI updates in real time.
+
+## Demo App
+
+A productivity app ("Planr") with a sidebar, working pages, and a few realistic bugs embedded for testing the full pipeline. The browser script is pre-wired to send errors to the dashboard at `localhost:3000`.
+
+### Running
+
+Make sure the dashboard is running first (see above), then:
+
+```bash
+cd demo
+pnpm install
+pnpm dev                # → http://localhost:5173
+```
+
+### Triggering errors
+
+The app works normally until you hit one of these:
+
+| Page | Action | Error |
+|---|---|---|
+| **Tasks** | Check or uncheck "Write integration tests" | `TypeError: Cannot read properties of null (reading 'join')` — analytics code calls `.join()` on `null` tags |
+| **Notes** | Click the **Sync** button on any note | `Unhandled Promise Rejection` — POSTs to a non-existent `/api/notes/sync` endpoint, then tries to parse the HTML error page as JSON |
+| **Settings** | Click **Export Data** | `TypeError: Converting circular structure to JSON` — the export object contains a circular reference |
+
+Errors are captured by the browser script and appear in the dashboard in real time.
 
 ## AI Agent
 
