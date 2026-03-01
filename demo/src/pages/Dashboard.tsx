@@ -1,4 +1,56 @@
+import { useState } from "react";
 import type { Task, Note } from "../store";
+
+// --- deeply nested report pipeline ---
+
+interface ReportNode {
+  label: string;
+  value: number;
+  children?: ReportNode[];
+  metadata?: { format: string };
+}
+
+function collectMetrics(tasks: Task[]): ReportNode[] {
+  return tasks.map((t) => ({
+    label: t.title,
+    value: t.completed ? 1 : 0,
+    children: t.tags?.map((tag) => ({
+      label: tag,
+      value: tag.length,
+    })),
+    metadata: t.completed ? { format: "done" } : undefined,
+  }));
+}
+
+function aggregateNodes(nodes: ReportNode[]): ReportNode {
+  return {
+    label: "root",
+    value: nodes.reduce((s, n) => s + n.value, 0),
+    children: nodes,
+  };
+}
+
+function normalizeTree(node: ReportNode): ReportNode {
+  const children = (node.children ?? []).map(normalizeTree);
+  return { ...node, children, value: node.value / (children.length || 1) };
+}
+
+function formatNode(node: ReportNode, depth: number): string {
+  const header = `${"  ".repeat(depth)}${node.label}: ${node.value.toFixed(2)} [${node.metadata!.format}]`;
+  const childLines = (node.children ?? []).map((c) => formatNode(c, depth + 1));
+  return [header, ...childLines].join("\n");
+}
+
+function renderReport(node: ReportNode): string {
+  return formatNode(node, 0);
+}
+
+function buildReport(tasks: Task[]): string {
+  const metrics = collectMetrics(tasks);
+  const tree = aggregateNodes(metrics);
+  const normalized = normalizeTree(tree);
+  return renderReport(normalized);
+}
 
 function StatCard({
   label,
@@ -27,6 +79,7 @@ export function Dashboard({
   tasks: Task[];
   notes: Note[];
 }) {
+  const [report, setReport] = useState<string | null>(null);
   const completed = tasks.filter((t) => t.completed).length;
   const pending = tasks.filter((t) => !t.completed).length;
   const highPriority = tasks.filter(
@@ -57,6 +110,26 @@ export function Dashboard({
         />
         <StatCard label="Pending" value={pending} sub={`${avgTags} avg tags`} />
         <StatCard label="High Priority" value={highPriority} />
+      </div>
+
+      <div className="mt-8">
+        <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+          Reports
+        </h3>
+        <button
+          onClick={() => {
+            const output = buildReport(tasks);
+            setReport(output);
+          }}
+          className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+        >
+          Generate Report
+        </button>
+        {report && (
+          <pre className="mt-3 rounded-lg bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-400 overflow-x-auto whitespace-pre-wrap">
+            {report}
+          </pre>
+        )}
       </div>
 
       <div className="mt-8">

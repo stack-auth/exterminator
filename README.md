@@ -93,6 +93,7 @@ The app works normally until you hit one of these:
 
 | Page | Action | Error |
 |---|---|---|
+| **Dashboard** | Click **Generate Report** | `TypeError: Cannot read properties of undefined (reading 'format')` — report pipeline calls through 5 nested functions before hitting a node with no `metadata` |
 | **Tasks** | Check or uncheck "Write integration tests" | `TypeError: Cannot read properties of null (reading 'join')` — analytics code calls `.join()` on `null` tags |
 | **Notes** | Click the **Sync** button on any note | `Unhandled Promise Rejection` — POSTs to a non-existent `/api/notes/sync` endpoint, then tries to parse the HTML error page as JSON |
 | **Settings** | Click **Export Data** | `TypeError: Converting circular structure to JSON` — the export object contains a circular reference |
