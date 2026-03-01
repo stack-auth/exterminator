@@ -22,9 +22,6 @@ COPY runner/requirements.txt ./
 RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 RUN playwright install --with-deps chromium
 
-# -- Clone demo repo to /code, install dependencies --
-RUN git clone https://github.com/planr-app/demo.git /code
-
 
 # -- Copy runner and agent code (do this last for better caching) --
 COPY runner/ /app/runner
