@@ -313,7 +313,7 @@ async def main():
                 # Map technical action names → readable verbs
                 readable = {
                     "navigate":          lambda p: f"Navigated to {p.get('url', '')}",
-                    "click":             lambda p: f"Clicked {'\"' + p.get('text','') + '\"' if p.get('text') else 'element'}",
+                    "click":             lambda p: f"Clicked {('\"' + p.get('text','') + '\"') if p.get('text') else 'element'}",
                     "type":              lambda p: f"Typed \"{p.get('text','')[:60]}\"",
                     "read_file":         lambda p: f"Read source file {p.get('file_name','').split('/')[-1]}",
                     "read_long_content": lambda p: f"Read file: {p.get('goal', p.get('source',''))[:80]}",
