@@ -21,7 +21,9 @@ LLM: set BROWSER_USE_API_KEY (preferred), ANTHROPIC_API_KEY, or OPENAI_API_KEY i
 
 import asyncio
 import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -32,6 +34,96 @@ from build_prompt import build_prompt
 from context import PipelineContext, RUNS_DIR
 
 load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# Video post-processing
+#
+# browser-use starts recording the moment the BrowserSession is created, while
+# the page is still on about:blank. The LLM takes 10-60 s to respond to its
+# first prompt, so the video has a long blank/black intro before any navigation.
+# We fix this two ways:
+#   1. `initial_actions` on the Agent navigates to the app URL *before* the LLM
+#      processes its first prompt, cutting the blank to < 2 s (browser launch time).
+#   2. After the run, we auto-detect any remaining black section with ffmpeg's
+#      `blackdetect` filter and trim it, then re-encode at 1.5x speed for a
+#      snappy demo feel.
+# ---------------------------------------------------------------------------
+
+def trim_and_polish_video(input_path: str, output_path: str) -> None:
+    """
+    Auto-trim the blank/black intro at the START of the video, then re-encode
+    at 1.5x speed for a snappy demo. Falls back to a plain copy if ffmpeg is
+    not installed or if post-processing would result in a clip < 3 seconds.
+
+    Root cause of blank intros: browser-use starts CDP screencasting when the
+    BrowserSession is created (page is still on about:blank). Using
+    `initial_actions` to pre-navigate reduces this to ~1s (browser launch time).
+    This function trims that remaining 1-2s as well.
+    """
+    if not shutil.which("ffmpeg"):
+        shutil.copy2(input_path, output_path)
+        return
+
+    # Get total duration first
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+        capture_output=True, text=True,
+    )
+    try:
+        total_duration = float(probe.stdout.strip())
+    except ValueError:
+        total_duration = 0.0
+
+    # Step 1: detect the pure-black intro on about:blank.
+    # We use a very low pixel threshold (pix_th=0.05) so that dark-themed UIs
+    # (near-black backgrounds like zinc-950) are NOT treated as black. Only the
+    # literal about:blank page (white or black chrome) and the brief blank
+    # between browser launch and first paint are caught.
+    # We only trim if a black section starts at t=0 AND the resulting clip would
+    # still be at least 5 s — short clips should not be trimmed further.
+    result = subprocess.run(
+        ["ffmpeg", "-i", input_path,
+         "-vf", "blackdetect=d=0.5:pix_th=0.05",
+         "-an", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    starts = [float(x) for x in re.findall(r"black_start:([\d.]+)", result.stderr)]
+    ends   = [float(x) for x in re.findall(r"black_end:([\d.]+)",   result.stderr)]
+    trim_offset = 0.0
+    for start, end in zip(starts, ends):
+        if start < 0.5:  # only trim a black section at the very beginning
+            trim_offset = end
+            break
+
+    remaining = total_duration - trim_offset
+    if trim_offset < 1.0 or remaining < 5.0:
+        trim_offset = 0.0
+
+    if trim_offset > 0:
+        print(f"  trimming {trim_offset:.1f}s blank intro (of {total_duration:.1f}s total)")
+
+    # Step 2: trim + compress for web sharing. We do NOT speed up by default
+    # because the agent session is already short — speeding it up makes it feel
+    # rushed. We do re-encode to h264 with slight compression and scale to 1280px.
+    vf_filter = "scale=1280:-2"
+    cmd = ["ffmpeg", "-y"]
+    if trim_offset > 0:
+        cmd += ["-ss", str(trim_offset)]
+    cmd += [
+        "-i", input_path,
+        "-vf", vf_filter,
+        "-r", "30",
+        "-c:v", "libx264", "-crf", "22", "-preset", "fast",
+        "-an",  # no audio
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f"  [warn] ffmpeg polish failed, using original: {e.stderr[-200:]}")
+        shutil.copy2(input_path, output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -221,15 +313,13 @@ async def main():
         print(f"  [step {n_steps}] {label[:80]}")
         ctx.agent_step(agent_name, n_steps, label[:120], detail=detail)
 
-    # Set up per-run video recording directory.
-    # browser-use saves a UUID-named .mp4 there; we rename it after the run.
+    # Record directly into the run directory. browser-use saves a UUID-named
+    # .mp4 there; we rename it to reproduce.mp4 / validate.mp4 after the run.
     run_dir = ctx.run_dir   # runs/<run_id>/  (created by the property)
-    recording_dir = run_dir / "recordings"
-    recording_dir.mkdir(exist_ok=True)
 
     from browser_use import Agent, BrowserSession
     session = BrowserSession(
-        record_video_dir=str(recording_dir),
+        record_video_dir=str(run_dir),
         headless=True,
     )
     agent = Agent(
@@ -240,17 +330,35 @@ async def main():
         output_model_schema=output_schema,    # enforces typed JSON output
         available_file_paths=source_files or None,  # lets agent read source files
         register_new_step_callback=on_step,
+        # Navigate to the app URL immediately at session start, BEFORE the LLM
+        # processes its first prompt. This eliminates most of the blank intro in
+        # the recorded video (recording starts on about:blank, and pre-navigation
+        # means the blank window is only the ~1s browser launch time, not the
+        # 30-60s the LLM takes to respond to the first prompt).
+        # NOTE: `directly_open_url=True` (default) already does this, but gets
+        # skipped when the task contains multiple URLs (e.g. stack trace URLs),
+        # so we force it explicitly via initial_actions.
+        initial_actions=[{"navigate": {"url": ctx.input.app_url, "new_tab": False}}],
     )
     history = await agent.run(max_steps=20)
 
-    # Find the recorded video (UUID-named .mp4) and move it to a stable path.
+    # Find the raw recorded video (UUID-named .mp4), post-process it, then save
+    # Find the raw recorded video (UUID-named .mp4) in the run dir and rename
+    # it to a stable path after post-processing.
     video_path: str | None = None
-    mp4_files = sorted(recording_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    mp4_files = sorted(
+        [p for p in run_dir.glob("*.mp4") if p.stem != agent_name],
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
     if mp4_files:
+        raw_mp4 = mp4_files[0]
         dest = run_dir / f"{agent_name}.mp4"
-        shutil.move(str(mp4_files[0]), str(dest))
+        # Post-process: trim blank intro + 1.5x speed + compress
+        trim_and_polish_video(str(raw_mp4), str(dest))
+        raw_mp4.unlink(missing_ok=True)  # remove the raw recording
         video_path = str(dest)
-        print(f"  video: {dest}")
+        size_kb = dest.stat().st_size // 1024
+        print(f"  video: {dest} ({size_kb} KB)")
     else:
         print("  video: not recorded (install browser-use[video] to enable)")
 

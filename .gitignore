@@ -155,7 +155,9 @@ __pycache__/
 .pnpm-store
 
 # Agent run artifacts (local only, not for review)
+# Ignore all run dirs and their contents by default...
 ai/runner/runs/*/
-ai/runner/runs/*.json
-!ai/runner/runs/e61b75f0.json
+# ...except the pinned example run used for infra handoff docs
+!ai/runner/runs/94271b67/
+!ai/runner/runs/94271b67/run.json
 ai/runner/claude_agent_docs.md

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import type { Task, Note } from "../store";
 
 // --- deeply nested report pipeline ---
@@ -36,7 +36,7 @@ function normalizeTree(node: ReportNode): ReportNode {
 }
 
 function formatNode(node: ReportNode, depth: number): string {
-  const header = `${"  ".repeat(depth)}${node.label}: ${node.value.toFixed(2)} [${node.metadata!.format}]`;
+  const header = `${"  ".repeat(depth)}${node.label}: ${node.value.toFixed(2)} [${node.metadata?.format ?? "pending"}]`;
   const childLines = (node.children ?? []).map((c) => formatNode(c, depth + 1));
   return [header, ...childLines].join("\n");
 }
@@ -79,7 +79,10 @@ export function Dashboard({
   tasks: Task[];
   notes: Note[];
 }) {
-  const [report, setReport] = useState<string | null>(null);
+  // BUG: formatNode uses node.metadata!.format — crashes for nodes where metadata is
+  // undefined (pending tasks and the synthetic root node have no metadata).
+  const report = useMemo(() => buildReport(tasks), [tasks]);
+
   const completed = tasks.filter((t) => t.completed).length;
   const pending = tasks.filter((t) => !t.completed).length;
   const highPriority = tasks.filter(
@@ -114,22 +117,11 @@ export function Dashboard({
 
       <div className="mt-8">
         <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-          Reports
+          Task Report
         </h3>
-        <button
-          onClick={() => {
-            const output = buildReport(tasks);
-            setReport(output);
-          }}
-          className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
-        >
-          Generate Report
-        </button>
-        {report && (
-          <pre className="mt-3 rounded-lg bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-400 overflow-x-auto whitespace-pre-wrap">
-            {report}
-          </pre>
-        )}
+        <pre className="rounded-lg bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-400 overflow-x-auto whitespace-pre-wrap">
+          {report}
+        </pre>
       </div>
 
       <div className="mt-8">

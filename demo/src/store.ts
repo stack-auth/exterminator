@@ -41,7 +41,7 @@ const SEED_TASKS: Task[] = [
     title: "Write integration tests",
     completed: true,
     priority: "medium",
-    tags: null, // BUG: tags is null instead of [] — surfaces when task is toggled or stats are computed
+    tags: ["testing", "ci"],
     createdAt: Date.now() - 1800_000,
   },
   {
@@ -90,7 +90,7 @@ export function useTaskStore() {
       // track tag changes for analytics
       setTimeout(() => {
         const tagStr = (task.tags ?? []).join(",");
-        navigator.sendBeacon("/api/analytics", tagStr);
+        navigator?.sendBeacon("/api/analytics", tagStr);
       }, 0);
       return prev.map((t) =>
         t.id === id ? { ...t, completed: !t.completed } : t,
