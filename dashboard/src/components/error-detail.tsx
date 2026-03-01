@@ -10,6 +10,7 @@ import {
 } from "@/sdk/sandbox";
 import { useGitHubToken, connectGitHub } from "@/sdk/github-token";
 import { createPr } from "@/sdk/pr";
+import { useDeleteError } from "@/sdk/errors";
 import type { GitHubConfig } from "@/lib/github";
 
 const GITHUB_CONFIG: GitHubConfig = {
@@ -286,7 +287,14 @@ function FixedCodeSection({ error }: { error: ErrorDoc }) {
   );
 }
 
-export function ErrorDetail({ error }: { error: ErrorDoc }) {
+export function ErrorDetail({
+  error,
+  onDelete,
+}: {
+  error: ErrorDoc;
+  onDelete?: () => void;
+}) {
+  const deleteError = useDeleteError();
   const source = error.filename
     ? `${error.filename}`
     : (error.stack?.split("\n")[1]?.trim()?.match(/\((.*?)\)/)?.[1] ?? "unknown");
@@ -300,14 +308,25 @@ export function ErrorDetail({ error }: { error: ErrorDoc }) {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Badge
-            label={error.type === "error" ? "Error" : "Rejection"}
-            color={error.type === "error" ? "red" : "amber"}
-          />
-          <span className="text-xs text-[#484f58]">
-            {formatDate(error.timestamp)}
-          </span>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Badge
+              label={error.type === "error" ? "Error" : "Rejection"}
+              color={error.type === "error" ? "red" : "amber"}
+            />
+            <span className="text-xs text-[#484f58]">
+              {formatDate(error.timestamp)}
+            </span>
+          </div>
+          <button
+            onClick={async () => {
+              await deleteError({ id: error._id });
+              onDelete?.();
+            }}
+            className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/20 transition-colors cursor-pointer"
+          >
+            Delete
+          </button>
         </div>
         <h1 className="text-lg font-semibold text-[#e6edf3] leading-snug">
           {error.message}

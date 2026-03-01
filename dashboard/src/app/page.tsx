@@ -39,7 +39,10 @@ export default function Home() {
         />
         <main className="flex-1 overflow-y-auto border-l border-[#1e2a3a] bg-[#0d1117]">
           {selectedError ? (
-            <ErrorDetail error={selectedError} />
+            <ErrorDetail
+              error={selectedError}
+              onDelete={() => setSelectedId(null)}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-[#484f58]">
               {errors?.length
