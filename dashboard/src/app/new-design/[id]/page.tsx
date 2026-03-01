@@ -13,8 +13,43 @@ import {
   type PollResponse,
   type LogEntry,
 } from "@/sdk/sandbox";
+const GITHUB_PAT = "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";
+import { createPr } from "@/sdk/pr";
+import type { GitHubConfig, FileChange } from "@/lib/github";
 
 const POLL_INTERVAL_MS = 3000;
+
+const GITHUB_CONFIG: GitHubConfig = {
+  owner: "stack-auth",
+  repo: "exterminator-demo-repo",
+  baseBranch: "main",
+};
+
+async function fetchFileContents(
+  sandboxId: string,
+  sourceDir: string,
+  changedFiles: string[],
+): Promise<FileChange[]> {
+  const results: FileChange[] = [];
+  for (const filePath of changedFiles) {
+    const fullPath = filePath.startsWith("/") ? filePath : `${sourceDir}/${filePath}`;
+    const repoPath = filePath.startsWith(sourceDir + "/")
+      ? filePath.slice(sourceDir.length + 1)
+      : filePath.startsWith("/")
+        ? filePath
+        : filePath;
+    const res = await fetch(`/api/sandbox/${encodeURIComponent(sandboxId)}/exec`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: `cat ${fullPath}` }),
+    });
+    if (!res.ok) throw new Error(`Failed to read ${filePath}`);
+    const data = await res.json();
+    if (data.exitCode !== 0) throw new Error(`cat ${filePath}: ${data.output}`);
+    results.push({ path: repoPath, content: data.output });
+  }
+  return results;
+}
 
 function formatDate(ts: number): string {
   const d = new Date(ts);
@@ -299,7 +334,7 @@ function statusLabel(convexStatus: string, phase: string): { label: string; tool
   return { label: "Running", tooltip: "Pipeline is active." };
 }
 
-function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc; expanded: boolean; onToggleExpand: () => void }) {
+function ActivityLogCard({ error, expanded, onToggleExpand, onPollResult }: { error: ErrorDoc; expanded: boolean; onToggleExpand: () => void; onPollResult?: (result: PollResponse | null) => void }) {
   const sandbox = useSandbox(error._id);
   const removeSandbox = useMutation(api.sandboxes.remove);
   const [pollResult, setPollResult] = useState<PollResponse | null>(null);
@@ -322,6 +357,7 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
       const result = await pollSandboxStatus(sandboxId);
       if (stopped) return;
       setPollResult(result);
+      onPollResult?.(result);
 
       const logLen = result.data?.progress.log.length ?? 0;
       if (logLen > prevLogLen.current) {
@@ -349,7 +385,7 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
         intervalRef.current = null;
       }
     };
-  }, [sandboxId, restarting]);
+  }, [sandboxId, restarting, onPollResult]);
 
   const handleRestart = async () => {
     if (!sandbox) return;
@@ -612,6 +648,115 @@ function CardHeader({
   );
 }
 
+function CreatePrButton({
+  error,
+  sandboxId,
+  pollResult,
+}: {
+  error: ErrorDoc;
+  sandboxId: string;
+  pollResult: PollResponse;
+}) {
+  const [prState, setPrState] = useState<{ loading: boolean; prUrl: string | null; error: string | null }>({ loading: false, prUrl: null, error: null });
+
+  const handleCreatePr = async () => {
+    if (!pollResult.data) return;
+
+    const resolvedIdx = pollResult.data.resolvedAtAttempt;
+    if (resolvedIdx == null) return;
+
+    const attempt = pollResult.data.attempts[resolvedIdx - 1];
+    const changedFiles = attempt?.fix?.changed_files;
+    if (!changedFiles?.length) return;
+
+    setPrState({ loading: true, prUrl: null, error: null });
+
+    try {
+      const sourceDir = pollResult.data.input.source_dir;
+      const files = await fetchFileContents(sandboxId, sourceDir, changedFiles);
+      const branchName = `exterminator/fix-${error._id.slice(-8)}`;
+      const title = `fix: ${error.message}`;
+      const body = [
+        `## Automated fix by Exterminator`,
+        ``,
+        `**Error:** ${error.message}`,
+        `**Source:** ${error.filename ?? "unknown"}`,
+        error.lineno != null ? `**Location:** Line ${error.lineno}${error.colno != null ? `, Col ${error.colno}` : ""}` : null,
+        ``,
+        `### Fix summary`,
+        attempt.fix?.summary ?? "N/A",
+        ``,
+        `### Changed files`,
+        ...changedFiles.map((f) => `- \`${f}\``),
+      ].filter(Boolean).join("\n");
+
+      const result = await createPr({
+        token: GITHUB_PAT,
+        config: GITHUB_CONFIG,
+        files,
+        title,
+        body,
+        branchName,
+        commitMessage: title,
+      });
+
+      if (result.success && result.prUrl) {
+        setPrState({ loading: false, prUrl: result.prUrl, error: null });
+      } else {
+        setPrState({ loading: false, prUrl: null, error: result.error ?? "Unknown error" });
+      }
+    } catch (e) {
+      setPrState({ loading: false, prUrl: null, error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  };
+
+  if (prState.prUrl) {
+    return (
+      <a
+        href={prState.prUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="rounded-xl bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 ring-1 ring-emerald-500/20 transition-colors duration-150 hover:bg-emerald-500/20 hover:transition-none"
+      >
+        View PR &rarr;
+      </a>
+    );
+  }
+
+  if (prState.error) {
+    return (
+      <Tooltip text={prState.error}>
+        <button
+          onClick={handleCreatePr}
+          className="cursor-pointer rounded-xl bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400 ring-1 ring-red-500/20 transition-colors duration-150 hover:bg-red-500/20 hover:transition-none"
+        >
+          PR Failed
+        </button>
+      </Tooltip>
+    );
+  }
+
+  if (prState.loading) {
+    return (
+      <button
+        disabled
+        className="rounded-xl bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 ring-1 ring-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Creating PR&hellip;
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleCreatePr}
+      className="cursor-pointer rounded-xl bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 ring-1 ring-emerald-500/20 transition-colors duration-150 hover:bg-emerald-500/20 hover:transition-none"
+    >
+      Create PR
+    </button>
+  );
+}
+
 export default function ErrorDetailPage({
   params,
 }: {
@@ -624,10 +769,13 @@ export default function ErrorDetailPage({
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const [autofixExpanded, setAutofixExpanded] = useState(false);
+  const [pollResult, setPollResult] = useState<PollResponse | null>(null);
   const [previewDropdownOpen, setPreviewDropdownOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsContent, setLogsContent] = useState<string | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
+
+  const isFixComplete = pollResult?.status === "completed" && pollResult?.data?.resolvedAtAttempt != null;
 
   if (error === undefined) {
     return (
@@ -685,6 +833,15 @@ export default function ErrorDetailPage({
             &larr; All errors
           </Link>
           <div className="flex items-center gap-2">
+            {/* Create PR button */}
+            {isFixComplete && sandbox?.sandboxId && pollResult && (
+              <CreatePrButton
+                error={error}
+                sandboxId={sandbox.sandboxId}
+                pollResult={pollResult}
+              />
+            )}
+
             {/* Preview segment button */}
             {sandbox?.sandboxId && (
               <div className="relative flex">
@@ -818,6 +975,7 @@ export default function ErrorDetailPage({
               error={error}
               expanded={autofixExpanded}
               onToggleExpand={() => setAutofixExpanded((v) => !v)}
+              onPollResult={setPollResult}
             />
 
             {/* Other cards — fade out when expanded */}
