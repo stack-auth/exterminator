@@ -1,7 +1,8 @@
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   mkdirSync,
   existsSync,
   readdirSync,
@@ -9,6 +10,15 @@ import {
 } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
+
+// #region agent log
+const DEBUG_LOG = join(import.meta.dirname, "../debug.log");
+function dlog(msg, data) {
+  try {
+    appendFileSync(DEBUG_LOG, JSON.stringify({ timestamp: Date.now(), message: msg, data }) + "\n");
+  } catch {}
+}
+// #endregion
 
 const MAX_ATTEMPTS = 5;
 
@@ -23,13 +33,20 @@ export class PipelineRunner {
     this.runnerDir = runnerDir;
     this.runsDir = runsDir;
     this.python = resolvePython(runnerDir);
+    // #region agent log
+    let pyVersion = "";
+    try { pyVersion = execSync(`${this.python} --version 2>&1`).toString().trim(); } catch (e) { pyVersion = "error: " + e.message; }
+    let pydanticCheck = "";
+    try { pydanticCheck = execSync(`${this.python} -c "import pydantic; print(pydantic.__version__)" 2>&1`).toString().trim(); } catch (e) { pydanticCheck = "MISSING: " + e.message; }
+    dlog("constructor", { python: this.python, runnerDir, pyVersion, pydanticCheck, venvExists: existsSync(join(runnerDir, ".venv", "bin", "python3")) });
+    // #endregion
+    console.log("[runner] python:", this.python, "| version:", pyVersion, "| pydantic:", pydanticCheck);
     this.currentRunId = null;
     this.process = null;
     this.aborted = false;
     this.running = false;
     this.error = null;
     mkdirSync(runsDir, { recursive: true });
-    console.log(`[runner] python: ${this.python}`);
   }
 
   // -- Run CRUD ---------------------------------------------------------------
@@ -164,6 +181,10 @@ export class PipelineRunner {
   }
 
   _exec(cmd, args) {
+    // #region agent log
+    dlog("_exec:spawn", { cmd, args, cwd: this.runnerDir });
+    console.log("[runner] exec:", cmd, args.join(" "));
+    // #endregion
     return new Promise((resolve, reject) => {
       const proc = spawn(cmd, args, {
         cwd: this.runnerDir,
@@ -180,6 +201,10 @@ export class PipelineRunner {
 
       proc.on("close", (code) => {
         this.process = null;
+        // #region agent log
+        dlog("_exec:close", { cmd, args: args.join(" "), code, stderrTail: stderr.slice(-500) });
+        console.log("[runner] exit:", code, cmd, args.join(" "));
+        // #endregion
         if (code !== 0 && !this.aborted) {
           reject(
             new Error(

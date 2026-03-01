@@ -15,16 +15,20 @@ WORKDIR /app/agent
 COPY agent/package.json agent/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
-COPY agent/ .
-
 # --- Runner (Python) ---
 WORKDIR /app/runner
 
 COPY runner/requirements.txt ./
-RUN pip install --break-system-packages --no-cache-dir -r requirements.txt playwright
-RUN python3 -m playwright install --with-deps chromium
+RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
+RUN playwright install --with-deps chromium
 
-COPY runner/ .
+# -- Clone demo repo to /code, install dependencies --
+RUN git clone https://github.com/planr-app/demo.git /code
+
+
+# -- Copy runner and agent code (do this last for better caching) --
+COPY runner/ /app/runner
+COPY agent/ /app/agent
 
 WORKDIR /app
 
