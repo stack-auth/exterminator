@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.148.0",
+    "@stackframe/stack": "^2.8.71",
     "convex": "^1.32.0",
     "next": "16.1.6",
     "react": "19.2.3",

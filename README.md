@@ -41,12 +41,33 @@ cd ai && daytona snapshot create exterminator-ai --dockerfile ./Dockerfile  # bu
 cd dashboard
 pnpm install
 npx convex dev          # starts a local Convex backend, generates types, creates .env.local
-  
 ```
 
-Make sure to add the DAYTONA_API_KEY to the .env.local file.
-
 `npx convex dev` will prompt you to either log in or start without an account (local mode). It creates a `.env.local` with `NEXT_PUBLIC_CONVEX_URL` automatically.
+
+### Environment variables
+
+Add the following to `dashboard/.env.local`:
+
+| Variable | Source | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_CONVEX_URL` | Auto-created by `npx convex dev` | Convex backend URL |
+| `CONVEX_DEPLOYMENT` | Auto-created by `npx convex dev` | Convex deployment name |
+| `DAYTONA_API_KEY` | Daytona dashboard | Sandbox creation |
+| `NEXT_PUBLIC_STACK_PROJECT_ID` | [Stack Auth dashboard](https://app.stack-auth.com) → project settings | Auth |
+| `NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY` | Stack Auth dashboard → API keys | Auth |
+| `STACK_SECRET_SERVER_KEY` | Stack Auth dashboard → API keys | Auth (server-side) |
+
+### Stack Auth + GitHub OAuth
+
+The dashboard uses [Stack Auth](https://stack-auth.com) for authentication and to obtain GitHub OAuth tokens for PR creation.
+
+1. Create a project at [app.stack-auth.com](https://app.stack-auth.com) and copy the three env vars above
+2. Create a GitHub OAuth App at [github.com/settings/developers](https://github.com/settings/developers):
+   - **Homepage URL**: `http://localhost:[PORT]`
+   - **Authorization callback URL**: `https://api.stack-auth.com/api/v1/auth/oauth/callback/github`
+3. In the Stack Auth dashboard, go to **Auth Methods** → **GitHub**, switch off shared keys, and paste your GitHub Client ID + Client Secret
+4. Sign in at `http://localhost:3000/handler/sign-in` — the "Connect GitHub" button on error entries will then work
 
 ### Running
 
