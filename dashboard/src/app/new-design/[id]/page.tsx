@@ -4,6 +4,7 @@ import { use, useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useError, useDeleteError, type ErrorId } from "@/sdk/errors";
+import { useRecording } from "@/sdk/recording";
 import { useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import {
@@ -277,6 +278,76 @@ function VideoSlot({
         </div>
       )}
     </div>
+  );
+}
+
+function SessionReplayCard({ errorTimestamp }: { errorTimestamp: number }) {
+  const recording = useRecording(errorTimestamp);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<unknown>(null);
+
+  useEffect(() => {
+    if (!recording?.events || !containerRef.current) return;
+    if (playerRef.current) return;
+
+    let events: unknown[];
+    try {
+      events = JSON.parse(recording.events);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(events) || events.length === 0) return;
+
+    import("rrweb-player").then((mod) => {
+      // @ts-expect-error - CSS import for side effects
+      import("rrweb-player/dist/style.css");
+      const RrwebPlayer = mod.default;
+      containerRef.current!.innerHTML = "";
+      playerRef.current = new RrwebPlayer({
+        target: containerRef.current!,
+        props: {
+          events: events as never,
+          width: containerRef.current!.clientWidth,
+          height: Math.round(containerRef.current!.clientWidth * 9 / 16),
+          autoPlay: false,
+          showController: true,
+          speedOption: [1, 2, 4, 8],
+        },
+      });
+    });
+  }, [recording]);
+
+  if (recording === undefined) {
+    return (
+      <GlassCard>
+        <CardHeader dot="gray" title="Session Replay" />
+        <div className="px-4 py-4">
+          <p className="text-xs text-[#484f58]">Loading&hellip;</p>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  if (recording === null) {
+    return (
+      <GlassCard>
+        <CardHeader dot="gray" title="Session Replay" />
+        <div className="px-4 py-5 text-center">
+          <p className="text-xs italic text-[#484f58]">
+            No session recording for this error
+          </p>
+        </div>
+      </GlassCard>
+    );
+  }
+
+  return (
+    <GlassCard>
+      <CardHeader dot="purple" title="Session Replay" />
+      <div className="p-2">
+        <div ref={containerRef} className="w-full rounded-lg overflow-hidden" />
+      </div>
+    </GlassCard>
   );
 }
 
@@ -966,6 +1037,9 @@ export default function ErrorDetailPage({
               <CardHeader dot="gray" title="Stack Trace" />
               <StackTrace stack={error.stack} />
             </GlassCard>
+
+            {/* Session Replay */}
+            <SessionReplayCard errorTimestamp={error.timestamp} />
           </div>
 
           {/* Right column */}
