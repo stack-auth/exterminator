@@ -1,51 +1,55 @@
 # Exterminator
 
-## Structure
+**Autonomous bug detection, reproduction, and fixing for web apps.**
+
+Exterminator watches your frontend for crashes. When one happens, it spins up an isolated cloud sandbox, reproduces the error on video, patches the code, opens a GitHub PR, then validates the fix — all without human intervention.
+
+```
+Error crashes your app
+       │
+       ▼
+Browser script captures it → Dashboard ingests it
+       │
+       ▼
+Daytona sandbox spins up
+       │
+       ├─ [Reproduce agent]  navigates the app, confirms the crash (video)
+       ├─ [Fix agent]        reads source, patches the bug, opens a PR
+       └─ [Validate agent]   re-runs the app, confirms fix + no regressions (video)
+```
+
+---
+
+## Repo structure
 
 ```
 browser-script/   TypeScript → single JS bundle for <script> tags
-dashboard/         Next.js app + Convex DB — error monitoring UI
-demo/              Sample app with embedded bugs for end-to-end testing
-ai/                AI agent running in Docker
-  agent/           Agent source, copied to /agent in the container
+dashboard/        Next.js + Convex — error monitoring UI and pipeline orchestrator
+demo/             Sample React app (Planr) with realistic bugs for end-to-end testing
+ai/
+  agent/          Node.js agent server running inside the Daytona sandbox
+  runner/         Python pipeline: reproduce → fix → validate
+  Dockerfile      Image baked with the agent, demo app clone, and all deps
+  entrypoint.sh   Pulls latest demo code, starts Vite dev server + agent server
+  create-snapshot.ts  Builds and registers a new Daytona snapshot
 ```
 
-## Prerequisites
+---
 
-- [pnpm](https://pnpm.io/)
-- [Node.js](https://nodejs.org/) v18+
-- [Docker](https://www.docker.com/) (for the AI agent)
+## Quick start
 
-## Browser Script
-
-Bundles TypeScript into a single minified IIFE file at `dist/index.global.js`, ready to be loaded via `<script src="...">`.
-
-```bash
-cd browser-script
-pnpm install
-pnpm build        # one-off build → dist/index.global.js
-pnpm dev          # rebuild on file changes
-```
-
-## Dashboard
-
-Next.js app backed by [Convex](https://convex.dev/) for storing and viewing captured errors.
-
-### First-time setup
-
-```bash
-cd ai && daytona snapshot create exterminator-ai --dockerfile ./Dockerfile  # build daytona snapshot
-```
+### 1. Dashboard
 
 ```bash
 cd dashboard
 pnpm install
-npx convex dev          # starts a local Convex backend, generates types, creates .env.local
+
+# Start local Convex backend (generates .env.local automatically)
+npx convex dev
+
+# In a second terminal, start Next.js
+pnpm dev -p 3003     # → http://localhost:3003
 ```
-
-`npx convex dev` will prompt you to either log in or start without an account (local mode). It creates a `.env.local` with `NEXT_PUBLIC_CONVEX_URL` automatically.
-
-### Environment variables
 
 Add the following to `dashboard/.env.local`:
 
@@ -53,130 +57,76 @@ Add the following to `dashboard/.env.local`:
 |---|---|---|
 | `NEXT_PUBLIC_CONVEX_URL` | Auto-created by `npx convex dev` | Convex backend URL |
 | `CONVEX_DEPLOYMENT` | Auto-created by `npx convex dev` | Convex deployment name |
-| `DAYTONA_API_KEY` | Daytona dashboard | Sandbox creation |
-| `NEXT_PUBLIC_STACK_PROJECT_ID` | [Stack Auth dashboard](https://app.stack-auth.com) → project settings | Auth |
-| `NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY` | Stack Auth dashboard → API keys | Auth |
-| `STACK_SECRET_SERVER_KEY` | Stack Auth dashboard → API keys | Auth (server-side) |
+| `DAYTONA_API_KEY` | [Daytona dashboard](https://app.daytona.io) | Sandbox creation |
+| `ANTHROPIC_API_KEY` | [Anthropic console](https://console.anthropic.com) | Fix agent (Claude) |
+| `NEXT_PUBLIC_STACK_PROJECT_ID` | [Stack Auth](https://app.stack-auth.com) → project settings | Auth |
+| `NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY` | Stack Auth → API keys | Auth |
+| `STACK_SECRET_SERVER_KEY` | Stack Auth → API keys | Auth (server-side) |
 
-### Stack Auth + GitHub OAuth
-
-The dashboard uses [Stack Auth](https://stack-auth.com) for authentication and to obtain GitHub OAuth tokens for PR creation.
-
-1. Create a project at [app.stack-auth.com](https://app.stack-auth.com) and copy the three env vars above
-2. Create a GitHub OAuth App at [github.com/settings/developers](https://github.com/settings/developers):
-   - **Homepage URL**: `http://localhost:[PORT]`
-   - **Authorization callback URL**: `https://api.stack-auth.com/api/v1/auth/oauth/callback/github`
-3. In the Stack Auth dashboard, go to **Auth Methods** → **GitHub**, switch off shared keys, and paste your GitHub Client ID + Client Secret
-4. Sign in at `http://localhost:3000/handler/sign-in` — the "Connect GitHub" button on error entries will then work
-
-### Running
-
-You need **two terminals** — one for Convex, one for Next.js:
-
-```bash
-# terminal 1 — Convex backend (keeps schema and functions in sync)
-cd dashboard
-npx convex dev
-
-# terminal 2 — Next.js dev server
-cd dashboard
-pnpm dev                # → http://localhost:3002
-```
-
-### Architecture
-
-```
-Browser Script                Dashboard (Next.js)               Daytona
-─────────────                 ───────────────────               ───────
-                    POST /api/events
-  capture error  ──────────────────────►  store in Convex
-                                          (errors table)
-                                                │
-                                                ▼
-                                          Dashboard UI
-                                          renders ErrorCard
-                                                │
-                                     POST /api/sandbox
-                                     { errorId, error }
-                                                │
-                                                ▼
-                                          create sandbox  ──────►  Daytona sandbox
-                                          store in Convex          created
-                                          (sandboxes table)
-                                                │
-                                          return sandboxId
-                                          to frontend
-                                                │
-                                          fire-and-forget  ─────►  run AI pipeline
-                                          runPipeline()            (reproduce → fix
-                                                │                   → validate)
-                                          status updates  ◄──────  pipeline progress
-                                          written to Convex
-```
-
-**Error ingestion** — The browser script captures uncaught errors and unhandled rejections, batches them, and POSTs to `/api/events`. This route only writes to Convex and returns immediately.
-
-```
-POST /api/events
-Content-Type: application/json
-
-{ "events": [ ... ] }
-```
-
-Point the browser script at this endpoint:
-
-```html
-<script src="exterminator.js" data-endpoint="http://localhost:3002/api/events"></script>
-```
-
-**Sandbox creation** — When the dashboard UI mounts an error card, it checks the `sandboxes` table in Convex. If no sandbox exists for that error, the frontend calls `/api/sandbox` with the error data. The route creates a Daytona sandbox, writes a record to Convex, and returns the `sandboxId` to the frontend. The AI pipeline (reproduce, fix, validate) runs fire-and-forget in the background, updating the sandbox status in Convex as it progresses. The frontend reactively picks up these status changes via Convex's real-time queries.
-
-## Demo App
-
-A productivity app ("Planr") with a sidebar, working pages, and a few realistic bugs embedded for testing the full pipeline. The browser script is pre-wired to send errors to the dashboard at `localhost:3002`.
-
-### Running
-
-Make sure the dashboard is running first (see above), then:
+### 2. Demo app
 
 ```bash
 cd demo
 pnpm install
-pnpm dev                # → http://localhost:5173
+pnpm dev     # → http://localhost:3001
 ```
 
-### Triggering errors
+The demo app (`Planr`) ships with realistic bugs. The browser script is pre-configured to send errors to the dashboard. Trigger a bug by clicking on a task with no due date — the detail panel will crash with `TypeError: Cannot read properties of null (reading 'split')`.
 
-The app works normally until you hit one of these:
+### 3. Browser script
 
-| Page | Action | Error |
-|---|---|---|
-| **Dashboard** | Click **Generate Report** | `TypeError: Cannot read properties of undefined (reading 'format')` — report pipeline calls through 5 nested functions before hitting a node with no `metadata` |
-| **Tasks** | Check or uncheck "Write integration tests" | `TypeError: Cannot read properties of null (reading 'join')` — analytics code calls `.join()` on `null` tags |
-| **Notes** | Click the **Sync** button on any note | `Unhandled Promise Rejection` — POSTs to a non-existent `/api/notes/sync` endpoint, then tries to parse the HTML error page as JSON |
-| **Settings** | Click **Export Data** | `TypeError: Converting circular structure to JSON` — the export object contains a circular reference |
+To wire up your own app, add to your `index.html`:
 
-Errors are captured by the browser script and appear in the dashboard in real time.
+```html
+<script src="exterminator.js" data-endpoint="http://localhost:3003/api/events"></script>
+```
 
-## AI Agent
+To rebuild the script from source:
 
-All source lives in `ai/agent/` and gets placed at `/agent` inside the container.
+```bash
+cd browser-script
+pnpm install
+pnpm build     # → dist/index.global.js
+```
 
-### Production
+---
 
-Build an image with the agent code baked in:
+## Authentication (Stack Auth + GitHub OAuth)
+
+The dashboard uses [Stack Auth](https://stack-auth.com) for auth and to obtain GitHub tokens for PR creation.
+
+1. Create a project at [app.stack-auth.com](https://app.stack-auth.com) and copy the three env vars above
+2. Create a GitHub OAuth App at [github.com/settings/developers](https://github.com/settings/developers):
+   - **Homepage URL**: `http://localhost:3003`
+   - **Authorization callback URL**: `https://api.stack-auth.com/api/v1/auth/oauth/callback/github`
+3. In Stack Auth → **Auth Methods** → **GitHub**, paste your Client ID + Secret
+4. Sign in at `http://localhost:3003/handler/sign-in`
+
+---
+
+## Daytona snapshot
+
+The AI pipeline runs inside a Daytona sandbox built from `ai/Dockerfile`. The snapshot is pre-baked with Python, Node, pnpm, ffmpeg, Playwright, and a clone of the demo repo.
+
+To build a new snapshot (replaces the existing one — coordinate with the team first):
 
 ```bash
 cd ai
-docker build -t exterminator-agent .
-docker run exterminator-agent
+pnpm install
+DAYTONA_API_KEY=... npx tsx create-snapshot.ts
 ```
 
-### Development
+The snapshot name defaults to `exterminator-ai-8` and is configurable via `DAYTONA_SNAPSHOT_NAME` in `dashboard/.env.local`.
 
-Mount the local `agent/` directory into the container so changes are reflected immediately:
+---
 
-```bash
-cd ai
-docker compose up
-```
+## How the pipeline works
+
+1. **Browser script** captures uncaught errors and unhandled rejections, batches them, and POSTs to `POST /api/events`.
+2. **Dashboard** stores the error in Convex. The UI renders an error card and automatically calls `POST /api/sandbox` to spin up a Daytona sandbox.
+3. **Reproduce agent** (`browser-use` + Python) navigates the live app inside the sandbox, confirms the crash, and records a video.
+4. **Fix agent** (`claude-code` SDK) reads the source files implicated in the stack trace and applies a targeted patch. If a previous fix introduced a regression, the agent receives that context and tries again.
+5. **Validate agent** (`browser-use` + Python) re-runs the app, confirms the original crash is gone, performs a full regression sweep across all pages, and records a video. If a new error is found, the loop repeats from step 4.
+6. On success, the fix agent opens a **GitHub PR** with the patched files.
+
+All progress is written to Convex in real time and streamed to the dashboard UI.
