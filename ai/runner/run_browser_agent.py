@@ -107,7 +107,7 @@ def trim_and_polish_video(input_path: str, output_path: str) -> None:
     # Step 2: trim + compress for web sharing. We do NOT speed up by default
     # because the agent session is already short — speeding it up makes it feel
     # rushed. We do re-encode to h264 with slight compression and scale to 1280px.
-    vf_filter = "scale=1280:-2"
+    vf_filter = "setpts=2.0*PTS,scale=1280:-2"
     cmd = ["ffmpeg", "-y"]
     if trim_offset > 0:
         cmd += ["-ss", str(trim_offset)]
