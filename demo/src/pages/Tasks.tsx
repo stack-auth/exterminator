@@ -17,7 +17,7 @@ function exportToCSV(tasks: Task[]) {
     task.id,
     `"${task.title}"`,
     task.priority,
-    (task.tags ?? []).join(", "),
+    task.tags.join(", "),           // ← crashes when tags is null
     task.completed ? "done" : "pending",
   ]);
   const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
