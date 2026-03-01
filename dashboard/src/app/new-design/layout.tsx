@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 import { Rajdhani } from "next/font/google";
+import { StarfieldProvider, useStarfield } from "./starfield-context";
 
 const rajdhani = Rajdhani({
   variable: "--font-display",
@@ -20,7 +21,9 @@ function seededRandom(seed: number) {
 
 function Starfield() {
   const pathname = usePathname();
+  const { showStreaks } = useStarfield();
   const isDetailPage = pathname !== "/new-design";
+  const hideStreaks = isDetailPage || !showStreaks;
 
   const stars = useMemo(() => {
     const rng = seededRandom(42);
@@ -68,15 +71,9 @@ function Starfield() {
           50% { opacity: 0.02; transform: translate(calc(var(--star-dx) * 2), calc(var(--star-dy) * 2)); }
           75% { transform: translate(var(--star-dx), var(--star-dy)); }
         }
-        @keyframes streak-drift {
-          0%, 100% {
-            opacity: var(--streak-opacity);
-            transform: translate(-50%, -50%) rotate(var(--streak-angle)) scaleX(1) translateX(0px);
-          }
-          50% {
-            opacity: calc(var(--streak-opacity) * 2);
-            transform: translate(-50%, -50%) rotate(var(--streak-angle)) scaleX(1.3) translateX(8px);
-          }
+        @keyframes streak-pulse {
+          0%, 100% { opacity: var(--streak-opacity); }
+          50% { opacity: calc(var(--streak-opacity) * 1.5); }
         }
       `}</style>
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
@@ -105,7 +102,7 @@ function Starfield() {
 
         {/* Stars */}
         {stars.map((s) => {
-          const starOpacity = isDetailPage ? s.opacity * 0.5 : s.opacity;
+          const starOpacity = hideStreaks ? s.opacity * 0.5 : s.opacity;
           return (
             <div
               key={s.id}
@@ -126,7 +123,7 @@ function Starfield() {
         })}
 
         {/* Warp speed streaks — hidden on detail pages */}
-        {!isDetailPage && streaks.map((s) => (
+        {!hideStreaks && streaks.map((s) => (
           <div
             key={s.id}
             className="absolute"
@@ -138,7 +135,7 @@ function Starfield() {
               width: `${s.length}px`,
               height: `${s.width}px`,
               background: `linear-gradient(90deg, transparent, rgba(210, 220, 240, ${Math.min(s.opacity * 4, 1)}), transparent)`,
-              animation: `streak-drift ${s.duration}s ${s.delay}s ease-in-out infinite`,
+              animation: `streak-pulse ${s.duration}s ${s.delay}s ease-in-out infinite`,
               transform: `translate(-50%, -50%) rotate(${s.angle}deg)`,
               borderRadius: "999px",
             } as React.CSSProperties}
@@ -155,9 +152,11 @@ export default function NewDesignLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className={`${rajdhani.variable} relative min-h-screen overflow-hidden`}>
-      <Starfield />
-      <div className="relative z-10">{children}</div>
-    </div>
+    <StarfieldProvider>
+      <div className={`${rajdhani.variable} relative min-h-screen overflow-hidden`}>
+        <Starfield />
+        <div className="relative z-10">{children}</div>
+      </div>
+    </StarfieldProvider>
   );
 }

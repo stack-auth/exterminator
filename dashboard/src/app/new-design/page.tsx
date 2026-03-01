@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useErrors } from "@/sdk/errors";
+import { useStarfield } from "./starfield-context";
 
 function formatRelativeTime(ts: number): string {
   const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -241,6 +242,13 @@ function ErrorRow({
 
 export default function NewDesignHome() {
   const errors = useErrors();
+  const { showStreaks, setShowStreaks } = useStarfield();
+  const hasErrors = errors && errors.length > 0;
+  const shouldShowStreaks = !hasErrors;
+
+  if (shouldShowStreaks !== showStreaks) {
+    setShowStreaks(shouldShowStreaks);
+  }
 
   return (
     <div className="min-h-screen px-6 pb-16 pt-10">
@@ -261,14 +269,14 @@ export default function NewDesignHome() {
               Exterminator
             </span>
           </h1>
-          {errors && errors.length > 0 && (
+          {hasErrors && (
             <p className="mt-3 text-sm text-[#8b949e]">
               {errors.length} error{errors.length !== 1 ? "s" : ""} captured
             </p>
           )}
         </header>
 
-        <SpaceDebris />
+        {!hasErrors && <SpaceDebris />}
 
         {/* Content */}
         {errors === undefined ? (
