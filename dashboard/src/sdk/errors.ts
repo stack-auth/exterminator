@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -12,4 +12,8 @@ export function useErrors() {
 
 export function useError(id: ErrorId) {
   return useQuery(api.errors.get, { id });
+}
+
+export function useDeleteError() {
+  return useMutation(api.errors.remove);
 }

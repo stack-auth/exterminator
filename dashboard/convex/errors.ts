@@ -18,6 +18,20 @@ export const get = query({
   },
 });
 
+export const remove = mutation({
+  args: { id: v.id("errors") },
+  handler: async (ctx, args) => {
+    const sandbox = await ctx.db
+      .query("sandboxes")
+      .withIndex("by_errorId", (q) => q.eq("errorId", args.id))
+      .first();
+    if (sandbox) {
+      await ctx.db.delete(sandbox._id);
+    }
+    await ctx.db.delete(args.id);
+  },
+});
+
 export const ingest = mutation({
   args: {
     events: v.array(
