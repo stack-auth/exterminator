@@ -166,7 +166,7 @@ export default function ErrorDetailPage({
         </nav>
 
         {/* Two-column layout */}
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           {/* Left column — main content */}
           <div className="flex flex-col gap-4">
             {/* Header card */}

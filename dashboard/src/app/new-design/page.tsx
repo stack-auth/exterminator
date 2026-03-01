@@ -279,9 +279,9 @@ export default function NewDesignHome() {
           <GetStartedSection />
         ) : (
           <div
-            className="overflow-hidden rounded-2xl backdrop-blur-xl"
+            className="relative z-10 overflow-hidden rounded-2xl backdrop-blur-lg"
             style={{
-              background: "linear-gradient(145deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.015) 100%)",
+              background: "linear-gradient(145deg, rgba(13,17,23,0.85) 0%, rgba(13,17,23,0.75) 100%)",
               boxShadow: "0 0 0 1px rgba(255,255,255,0.07), 0 4px 30px rgba(0,0,0,0.3), 0 0 60px rgba(96,165,250,0.03)",
             }}
           >
