@@ -269,17 +269,39 @@ async def main():
     ctx.agent_start(agent_name)
 
     async def on_step(browser_state, model_output, n_steps: int) -> None:
-        # Build a human-readable label. Priority:
-        #   1. next_goal    -- agent's own "what I'm about to do" sentence
-        #   2. evaluation_previous_goal -- "Success/Failed: ..." from last step
-        #   3. action.model_dump() -- serialize the concrete action taken
+        # Build a human-readable label for the log / frontend status display.
+        #
+        # Priority order:
+        #   1. next_goal       — agent's stated intention ("Click the Export CSV button")
+        #   2. evaluation_previous_goal — outcome of last step ("Navigated successfully")
+        #   3. memory (first sentence) — agent's running narrative; useful when the
+        #      above are empty (common with the bu-latest model)
+        #   4. Translated action description — human-readable version of the raw action
+
+        def _first_sentence(text: str) -> str:
+            for sep in (".", "\n"):
+                idx = text.find(sep)
+                if idx > 20:
+                    return text[:idx].strip()
+            return text[:120].strip()
+
         label = (getattr(model_output, "next_goal", None) or "").strip()
 
         if not label:
             eval_prev = (getattr(model_output, "evaluation_previous_goal", None) or "").strip()
             if eval_prev:
                 label = eval_prev.split("\n")[0]
+                for prefix in ("Success: ", "Failed: ", "Success:", "Failed:"):
+                    if label.startswith(prefix):
+                        label = label[len(prefix):].strip()
+                        break
 
+        if not label:
+            memory = (getattr(model_output, "memory", None) or "").strip()
+            if memory:
+                label = _first_sentence(memory)
+
+        # Translate the raw action into a readable sentence as a last resort.
         if not label:
             actions = getattr(model_output, "action", None) or []
             if not isinstance(actions, list):
@@ -287,31 +309,37 @@ async def main():
             if actions:
                 data = actions[0].model_dump(exclude_none=True, mode="json")
                 action_name = next(iter(data), "action")
-                params = data.get(action_name, {})
-                hint = ""
-                if isinstance(params, dict):
-                    hint = (
-                        params.get("url")
-                        or params.get("text", "")[:60]
-                        or params.get("query", "")[:60]
-                        or str(params)[:60]
-                    )
-                else:
-                    hint = str(params)[:60]
-                label = f"{action_name}({hint})" if hint else action_name
+                params = data.get(action_name, {}) if isinstance(data.get(action_name), dict) else {}
+                # Map technical action names → readable verbs
+                readable = {
+                    "navigate":          lambda p: f"Navigated to {p.get('url', '')}",
+                    "click":             lambda p: f"Clicked {'\"' + p.get('text','') + '\"' if p.get('text') else 'element'}",
+                    "type":              lambda p: f"Typed \"{p.get('text','')[:60]}\"",
+                    "read_file":         lambda p: f"Read source file {p.get('file_name','').split('/')[-1]}",
+                    "read_long_content": lambda p: f"Read file: {p.get('goal', p.get('source',''))[:80]}",
+                    "evaluate":          lambda p: "Ran browser script to inspect page state",
+                    "scroll":            lambda p: f"Scrolled {'down' if (p.get('delta_y',0) or 0) > 0 else 'up'} on page",
+                    "wait":              lambda p: f"Waited {p.get('seconds', '')}s for page to load",
+                    "done":              lambda p: "Completed — reporting results",
+                    "go_back":           lambda p: "Navigated back",
+                    "open_tab":          lambda p: f"Opened new tab{': ' + p.get('url','') if p.get('url') else ''}",
+                    "close_tab":         lambda p: "Closed tab",
+                    "extract_content":   lambda p: f"Extracted page content: {p.get('goal','')[:60]}",
+                }.get(action_name)
+                label = readable(params) if readable else f"{action_name}"
 
-        label = label or f"step {n_steps}"
+        label = (label or f"Step {n_steps}").strip()
         url = getattr(browser_state, "url", None)
         title = getattr(browser_state, "title", None)
         detail = f"{url} | {title}" if title else url
 
         # Surface any browser-side JS errors as their own log entries
         for err in (getattr(browser_state, "browser_errors", None) or []):
-            ctx.agent_step(agent_name, n_steps, f"[browser error] {err[:120]}", detail=url)
+            ctx.agent_step(agent_name, n_steps, f"Browser error: {err[:120]}", detail=url)
             print(f"  [step {n_steps}] ⚠ browser error: {err[:80]}")
 
-        print(f"  [step {n_steps}] {label[:80]}")
-        ctx.agent_step(agent_name, n_steps, label[:120], detail=detail)
+        print(f"  [step {n_steps}] {label[:100]}")
+        ctx.agent_step(agent_name, n_steps, label[:200], detail=detail)
 
     # Record directly into the run directory. browser-use saves a UUID-named
     # .mp4 there; we rename it to reproduce.mp4 / validate.mp4 after the run.
