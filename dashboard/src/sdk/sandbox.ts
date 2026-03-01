@@ -108,6 +108,7 @@ export async function startSandbox(
 export async function pollSandboxStatus(
   sandboxId: string,
 ): Promise<PollResponse> {
+  await new Promise(resolve => setTimeout(resolve, 1000));
   const res = await fetch(`/api/sandbox/${encodeURIComponent(sandboxId)}`);
   if (!res.ok) {
     return { status: "failed", data: null };

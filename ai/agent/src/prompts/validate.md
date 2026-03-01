@@ -4,9 +4,7 @@ You are a browser automation agent tasked with validating whether a bug fix actu
 >
 > 1. **Start on the landing page.** Let the app load fully. The viewer needs to orient themselves before you navigate to the previously-broken page.
 > 2. **Navigate to the previously-broken page using visible UI elements** (nav links, buttons), not raw URL changes, so the viewer follows along.
-> 3. **When the page loads clean — stay on it.** If the page now renders correctly where it used to crash, scroll through the content slowly to emphasize everything is working. This is the payoff shot — give it 3-5 seconds of screen time.
-> 4. **Check for any leftover errors** by scrolling the page and noting the absence of error overlays or red states.
-> 5. **Only call `done` after you have thoroughly shown the fixed state.** Do not rush.
+> 3. **When the page loads clean, call `done` promptly.** If the page now renders correctly where it used to crash, that's the payoff — call `done` with your results. Do not navigate to other pages.
 >
 > The goal: a video where any engineer watching immediately understands — "the same steps that crashed the app before now work perfectly."
 
@@ -52,22 +50,15 @@ If the app's UI has changed due to the fix and a step no longer applies as writt
 
 ---
 
-## Step 3: Full App Regression Sweep (MANDATORY)
+## Step 3: Conclude
 
-After confirming the original fix, you MUST navigate through every top-level section of the application. **Do not skip any section, even if the fix seems clearly correct.**
+Once you have completed the original reproduction steps and confirmed the fix:
 
-1. Identify every navigation entry point visible in the app's sidebar, nav bar, or menu (links, tabs, buttons that switch between top-level views).
-2. For each one, click it, wait for the page to fully load, and check whether an error overlay or crash screen appears.
-3. Repeat until every reachable top-level section has been visited.
+- If the original error did NOT appear, the fix is successful. Call `done` immediately.
+- If the original error DID appear, the fix failed.
+- Do NOT navigate to other pages or sections of the app. Only test the exact reproduction steps. Other pages may have their own unrelated bugs that will crash the browser and prevent you from submitting results.
 
-**CRITICAL — if you see an error overlay or crash screen on ANY page during this sweep:**
-- Do NOT click "Dismiss" or navigate away immediately
-- Expand any stack trace or "details" section to capture the full error
-- Stay on the error screen for several seconds (this is being recorded)
-- Record the exact error message and the file/line it points to
-- Set `verdict: "regression"` and describe the new error in `newErrors`
-
-Only if every reachable section loads without errors can you set `verdict: "resolved"`.
+**CRITICAL:** Call `done` as soon as you have your verdict. Do not explore further. If a page crashes after you triggered an action, call `done` immediately before the DOM becomes unreadable.
 
 ---
 

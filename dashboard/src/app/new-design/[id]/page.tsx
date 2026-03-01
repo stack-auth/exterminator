@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useRef, useCallback } from "react";
+import { use, useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useError, useDeleteError, type ErrorId } from "@/sdk/errors";
@@ -175,7 +175,7 @@ function LogSection({ group }: { group: LogGroup }) {
               <span
                 className={`min-w-0 truncate text-[11px] ${
                   isError
-                    ? "text-red-400"
+                    ? "text-[#8b949e]"
                     : isDone
                       ? "text-emerald-400"
                       : isStart
@@ -189,6 +189,47 @@ function LogSection({ group }: { group: LogGroup }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function VideoSlot({
+  label,
+  src,
+  placeholder,
+  height,
+}: {
+  label: string;
+  src: string | null;
+  placeholder?: string;
+  height: string;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  return (
+    <div className="flex-1">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#8b949e]">
+        {label}
+      </p>
+      {src && !hasError ? (
+        <video
+          src={src}
+          controls
+          playsInline
+          className="w-full rounded-lg bg-black ring-1 ring-white/[0.06]"
+          style={{ height, objectFit: "contain" }}
+          onError={() => setHasError(true)}
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center rounded-lg ring-1 ring-white/[0.06]"
+          style={{ height, background: "rgba(255,255,255,0.02)" }}
+        >
+          <p className="text-xs text-[#484f58]">
+            {hasError ? "Video not available" : placeholder ?? "—"}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -255,15 +296,20 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevLogLen = useRef(0);
-  const autoStarted = useRef(false);
+  const [autoStarted, setAutoStarted] = useState(false);
 
   const sandboxId = sandbox?.sandboxId ?? "";
 
-  const startPolling = useCallback(() => {
-    if (!sandboxId || intervalRef.current) return;
+  // Polling is a genuine side effect — timer lifecycle tied to sandboxId
+  useEffect(() => {
+    if (!sandboxId || restarting) return;
+
+    let stopped = false;
 
     async function poll() {
+      if (stopped) return;
       const result = await pollSandboxStatus(sandboxId);
+      if (stopped) return;
       setPollResult(result);
 
       const logLen = result.data?.progress.log.length ?? 0;
@@ -274,7 +320,7 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
         });
       }
 
-      if (result.status === "completed" || result.status === "failed") {
+      if ((result.status === "completed" || result.status === "failed") && result.data !== null) {
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
@@ -284,33 +330,46 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
 
     poll();
     intervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [sandboxId]);
 
-  if (sandboxId && !intervalRef.current && !restarting) {
-    startPolling();
-  }
+    return () => {
+      stopped = true;
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [sandboxId, restarting]);
 
   const handleRestart = async () => {
     if (!sandbox) return;
     setRestarting(true);
+    setAutoStarted(true);
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
     setPollResult(null);
     prevLogLen.current = 0;
-    await removeSandbox({ id: sandbox._id });
-    await startSandbox(error._id, {
-      type: error.type,
-      message: error.message,
-      stack: error.stack,
-      filename: error.filename,
-      lineno: error.lineno,
-      colno: error.colno,
-      timestamp: error.timestamp,
-      pageUrl: error.pageUrl,
-      userAgent: error.userAgent,
-    });
+    try {
+      await removeSandbox({ id: sandbox._id });
+    } catch {
+      // Convex record may already be gone
+    }
+    try {
+      await startSandbox(error._id, {
+        type: error.type,
+        message: error.message,
+        stack: error.stack,
+        filename: error.filename,
+        lineno: error.lineno,
+        colno: error.colno,
+        timestamp: error.timestamp,
+        pageUrl: error.pageUrl,
+        userAgent: error.userAgent,
+      });
+    } catch {
+      // Sandbox creation may fail
+    }
     setRestarting(false);
   };
 
@@ -325,8 +384,8 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
     );
   }
 
-  if (sandbox === null && !restarting && !autoStarted.current) {
-    autoStarted.current = true;
+  if (sandbox === null && !restarting && !autoStarted) {
+    setAutoStarted(true);
     startSandbox(error._id, {
       type: error.type,
       message: error.message,
@@ -340,7 +399,7 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
     });
   }
 
-  if ((sandbox === null && !restarting) || (restarting)) {
+  if ((sandbox === null && !restarting) || restarting) {
     return (
       <GlassCard>
         <CardHeader dot="blue" title="Autofix" />
@@ -356,14 +415,21 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
     );
   }
 
-  const convexStatus = sandbox?.status ?? "creating";
   const progress = pollResult?.data?.progress;
   const log = progress?.log ?? [];
-  const status = pollResult?.status ?? "in_progress";
+  const pollStatus = pollResult?.status;
   const phase = progress?.phase ?? "idle";
   const currentAgent = progress?.currentAgent;
   const currentGoal = progress?.currentGoal;
-  const { label: statusLabelText, tooltip: statusTooltip } = statusLabel(convexStatus, phase);
+  const reproduceResult = pollResult?.data?.reproduce;
+  const isFixed = pollStatus === "completed";
+
+  // Derive effective status: prefer poll result over stale Convex status
+  const effectiveConvexStatus = pollStatus === "completed" ? "fixed"
+    : pollStatus === "failed" ? "failed"
+    : (sandbox?.status ?? "creating");
+  const status = pollStatus ?? "in_progress";
+  const { label: statusLabelText, tooltip: statusTooltip } = statusLabel(effectiveConvexStatus, phase);
 
   return (
     <GlassCard>
@@ -431,6 +497,27 @@ function ActivityLogCard({ error, expanded, onToggleExpand }: { error: ErrorDoc;
         >
           <AgentBadge agent={currentAgent} />
           <p className="truncate text-xs text-[#8b949e]">{currentGoal}</p>
+        </div>
+      )}
+
+      {/* Videos */}
+      {(reproduceResult || isFixed) && sandboxId && (
+        <div
+          className="flex gap-3 px-4 py-3"
+          style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+        >
+          <VideoSlot
+            label="Before"
+            src={reproduceResult ? `/api/sandbox/${encodeURIComponent(sandboxId)}/video/reproduce` : null}
+            placeholder={reproduceResult ? undefined : "Recording…"}
+            height={expanded ? "280px" : "200px"}
+          />
+          <VideoSlot
+            label="After"
+            src={isFixed ? `/api/sandbox/${encodeURIComponent(sandboxId)}/video/validate` : null}
+            placeholder={isFixed ? undefined : status === "in_progress" ? "Pending fix…" : "—"}
+            height={expanded ? "280px" : "200px"}
+          />
         </div>
       )}
 

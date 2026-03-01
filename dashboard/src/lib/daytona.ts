@@ -93,7 +93,7 @@ export interface ErrorEvent {
 // Config
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-2";
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-8";
 
 // ---------------------------------------------------------------------------
 // Singleton Daytona client
@@ -134,9 +134,37 @@ function buildEnvVars(): Record<string, string> {
 // ---------------------------------------------------------------------------
 
 async function startServices(sandbox: Sandbox, envVars: Record<string, string>): Promise<void> {
-  console.log("[daytona] Starting entrypoint (agent + demo app)...");
+  // Reinstall agent deps with npm (not pnpm) to get a flat node_modules
+  // that ESM can resolve — pnpm's symlinked store breaks ESM resolution in snapshots
+  console.log("[daytona] Installing agent dependencies (npm)...");
   await sandbox.process.executeCommand(
-    `nohup /app/entrypoint.sh > /tmp/entrypoint.log 2>&1 &`,
+    "npm install --legacy-peer-deps 2>&1 || true",
+    "/app/agent",
+    envVars,
+    60,
+  );
+
+  // Remove broken venv if it exists (0-byte python binary from snapshot artifacts)
+  await sandbox.process.executeCommand(
+    "rm -rf /app/runner/.venv",
+    "/app",
+    envVars,
+    5,
+  );
+
+  // Install ffmpeg + xvfb if missing (needed for Playwright video recording)
+  console.log("[daytona] Ensuring ffmpeg + xvfb...");
+  await sandbox.process.executeCommand(
+    "which ffmpeg && which xvfb-run && which xauth || (apt-get update -qq && apt-get install -y -qq ffmpeg xvfb xauth > /dev/null 2>&1)",
+    "/app",
+    envVars,
+    60,
+  );
+
+  console.log("[daytona] Starting demo app + agent server...");
+  await sandbox.process.executeCommand(
+    `nohup sh -c 'cd /code && pnpm dev --port 3000 --host &
+     cd /app/agent && xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" node src/index.js' > /tmp/entrypoint.log 2>&1 &`,
     "/app",
     envVars,
     10,
@@ -179,6 +207,24 @@ export async function createSandboxForError(
     envVars,
     autoStopInterval: 30,
   });
+
+  // Upload patched files from local repo to sandbox
+  const { readFileSync } = await import("fs");
+  const { join } = await import("path");
+  const aiDir = join(process.cwd(), "..", "ai");
+  const filesToPatch = [
+    { src: "agent/src/prompts/reproduce.md", dst: "/app/agent/src/prompts/reproduce.md" },
+    { src: "agent/src/prompts/validate.md", dst: "/app/agent/src/prompts/validate.md" },
+    { src: "runner/run_browser_agent.py", dst: "/app/runner/run_browser_agent.py" },
+  ];
+  for (const { src, dst } of filesToPatch) {
+    try {
+      const content = readFileSync(join(aiDir, src));
+      await sandbox.fs.uploadFile(content, dst);
+    } catch {
+      console.warn(`[daytona] Could not upload ${src}`);
+    }
+  }
 
   // Start the agent server + demo app via entrypoint
   await startServices(sandbox, envVars);
@@ -247,7 +293,20 @@ export async function runPipeline(
 ): Promise<void> {
   let lastStatus = "";
 
-  // Poll by reading run.json directly from disk — avoids HTTP stdout truncation
+  // Upload helper to check if the agent runner is still active
+  await sandbox.fs.uploadFile(
+    Buffer.from(`
+var http = require("http");
+var fs = require("fs");
+http.get("http://localhost:4000/api/runs/current", function(res) {
+  var d = "";
+  res.on("data", function(c) { d += c; });
+  res.on("end", function() { fs.writeFileSync("/tmp/_agent_status.json", d); process.exit(0); });
+}).on("error", function(e) { console.error(e.message); process.exit(1); });
+`),
+    "/tmp/_agent_status.js",
+  );
+
   const runJsonPath = `/app/runner/runs/${runId}/run.json`;
 
   for (;;) {
@@ -258,7 +317,14 @@ export async function runPipeline(
       const buf = await sandbox.fs.downloadFile(runJsonPath);
       ctx = JSON.parse(buf.toString()) as RunContext;
     } catch (err) {
-      console.error(`[daytona] [${runId}] Poll error:`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const statusCode = (err as { statusCode?: number })?.statusCode;
+      if (statusCode === 404 || statusCode === 401 || msg.includes("not found") || msg.includes("NotFound")) {
+        console.log(`[daytona] [${runId}] Sandbox gone (${statusCode}). Stopping poller.`);
+        onStatus?.("failed");
+        return;
+      }
+      console.error(`[daytona] [${runId}] Poll error:`, msg);
       continue;
     }
 
@@ -282,16 +348,26 @@ export async function runPipeline(
       return;
     }
 
-    if (ctx.status === "failed" || (phase === "done" && ctx.status !== "fixed")) {
-      console.log(`[daytona] [${runId}] Failed or done without fix`);
-      onStatus?.("failed");
+    if (ctx.status === "failed" || phase === "done" || phase === "error") {
+      console.log(`[daytona] [${runId}] Terminal state: status=${ctx.status} phase=${phase}`);
+      onStatus?.((ctx.status as string) === "fixed" ? "fixed" : "failed");
       return;
     }
 
-    // If the agent is no longer active and status is not terminal, it's done
-    if (phase === "done" || phase === "error") {
-      console.log(`[daytona] [${runId}] Pipeline ended with phase: ${phase}`);
-      onStatus?.(ctx.status === "fixed" ? "fixed" : "failed");
+    // Check if the agent runner has stopped (pipeline exited without updating status)
+    try {
+      await sandbox.process.executeCommand("node /tmp/_agent_status.js", "/app", {}, 10);
+      const statusBuf = await sandbox.fs.downloadFile("/tmp/_agent_status.json");
+      const agentStatus = JSON.parse(statusBuf.toString()) as { running: boolean; active: boolean };
+      if (!agentStatus.running) {
+        console.log(`[daytona] [${runId}] Agent runner stopped (running=false). Marking as failed.`);
+        onStatus?.("failed");
+        return;
+      }
+    } catch {
+      // Agent server might be down entirely
+      console.log(`[daytona] [${runId}] Cannot reach agent server. Marking as failed.`);
+      onStatus?.("failed");
       return;
     }
   }

@@ -107,7 +107,7 @@ def trim_and_polish_video(input_path: str, output_path: str) -> None:
     # Step 2: trim + compress for web sharing. We do NOT speed up by default
     # because the agent session is already short — speeding it up makes it feel
     # rushed. We do re-encode to h264 with slight compression and scale to 1280px.
-    vf_filter = "setpts=1.33*PTS,scale=1280:-2"
+    vf_filter = "setpts=2.66*PTS,scale=1280:-2"
     cmd = ["ffmpeg", "-y"]
     if trim_offset > 0:
         cmd += ["-ss", str(trim_offset)]
@@ -347,8 +347,10 @@ async def main():
 
     from browser_use import Agent, BrowserSession
     from browser_use.browser.profile import BrowserProfile
+    # Use headed mode under xvfb so CDP screencasting captures real frames
+    use_headed = os.environ.get("DISPLAY") is not None
     profile = BrowserProfile(
-        headless=True,
+        headless=not use_headed,
         record_video_dir=str(run_dir),
         interaction_highlight_color="rgb(99, 102, 241)",  # indigo
         interaction_highlight_duration=1.5,
@@ -375,25 +377,54 @@ async def main():
     )
     history = await agent.run(max_steps=20)
 
-    # Find the raw recorded video (UUID-named .mp4), post-process it, then save
-    # Find the raw recorded video (UUID-named .mp4) in the run dir and rename
-    # it to a stable path after post-processing.
+    # Close the browser session to finalize the video recording.
+    # Playwright writes video asynchronously on context close, so we need to
+    # explicitly access page.video to trigger the save, then wait for the file.
+    try:
+        # Access video objects before closing to ensure they're tracked
+        for context in session.browser.contexts if hasattr(session, 'browser') and session.browser else []:
+            for page in context.pages:
+                try:
+                    if page.video:
+                        video_path_obj = await page.video.path()
+                        print(f"  [video] page video path: {video_path_obj}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    try:
+        await session.close()
+    except Exception:
+        pass
+
+    # Wait for video file to appear on disk (Playwright writes async after context close)
     video_path: str | None = None
-    mp4_files = sorted(
-        [p for p in run_dir.glob("*.mp4") if p.stem != agent_name],
-        key=lambda p: p.stat().st_mtime, reverse=True,
-    )
-    if mp4_files:
-        raw_mp4 = mp4_files[0]
-        dest = run_dir / f"{agent_name}.mp4"
-        # Post-process: trim blank intro + 1.5x speed + compress
-        trim_and_polish_video(str(raw_mp4), str(dest))
-        raw_mp4.unlink(missing_ok=True)  # remove the raw recording
-        video_path = str(dest)
-        size_kb = dest.stat().st_size // 1024
-        print(f"  video: {dest} ({size_kb} KB)")
+    dest = run_dir / f"{agent_name}.mp4"
+    print(f"  [video] waiting for raw video in {run_dir}...")
+    for attempt in range(15):
+        await asyncio.sleep(2)
+        raw_videos = sorted(
+            [p for p in run_dir.glob("*.*")
+             if p.suffix in (".mp4", ".webm")
+             and p.stem != agent_name
+             and p.stat().st_size > 1024],
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        if raw_videos:
+            raw_mp4 = raw_videos[0]
+            print(f"  [video] found: {raw_mp4} ({raw_mp4.stat().st_size // 1024} KB)")
+            trim_and_polish_video(str(raw_mp4), str(dest))
+            raw_mp4.unlink(missing_ok=True)
+            video_path = str(dest)
+            size_kb = dest.stat().st_size // 1024
+            print(f"  [video] saved: {dest} ({size_kb} KB)")
+            break
+        if attempt % 3 == 2:
+            all_files = list(run_dir.glob("*.*"))
+            print(f"  [video] attempt {attempt+1}/15, files: {[f'{f.name}({f.stat().st_size})' for f in all_files]}")
     else:
-        print("  video: not recorded (install browser-use[video] to enable)")
+        print("  [video] no recording found after 30s wait")
 
     raw = history.final_result()
     print("\n" + "─" * 60)

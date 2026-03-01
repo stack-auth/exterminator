@@ -13,7 +13,7 @@ if (!process.env.DAYTONA_API_KEY) {
   }
 }
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai";
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-8";
 
 async function main() {
   const daytona = new Daytona({ apiKey: process.env.DAYTONA_API_KEY });

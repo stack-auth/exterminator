@@ -17,6 +17,14 @@ export const create = mutation({
     status: sandboxStatus,
   },
   handler: async (ctx, args) => {
+    // Remove any existing sandbox records for this error
+    const existing = await ctx.db
+      .query("sandboxes")
+      .withIndex("by_errorId", (q) => q.eq("errorId", args.errorId))
+      .collect();
+    for (const doc of existing) {
+      await ctx.db.delete(doc._id);
+    }
     return await ctx.db.insert("sandboxes", args);
   },
 });
@@ -44,6 +52,7 @@ export const getByErrorId = query({
     return await ctx.db
       .query("sandboxes")
       .withIndex("by_errorId", (q) => q.eq("errorId", args.errorId))
+      .order("desc")
       .first();
   },
 });

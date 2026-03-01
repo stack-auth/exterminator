@@ -2,3 +2,4 @@ agent/node_modules
 runner/__pycache__
 runner/runs
 **/*.pyc
+**/.venv

@@ -72,8 +72,12 @@ export async function GET(
       }
       data = JSON.parse(buf.toString()) as Record<string, unknown>;
     } catch (e) {
-      // Sandbox may be stopped/archived — fall back to status-only response
-      console.warn(`[poll] Could not read RunContext from sandbox ${sandboxId}:`, e);
+      const msg = e instanceof Error ? e.message : String(e);
+      const isNotFound = msg.includes("not found") || msg.includes("404");
+      if (isNotFound) {
+        return Response.json({ status: "failed" as PollStatus, data: null });
+      }
+      console.warn(`[poll] Could not read RunContext from sandbox ${sandboxId}:`, msg);
     }
 
     const response: PollResponse = { status, data };
