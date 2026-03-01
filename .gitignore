@@ -158,6 +158,6 @@ __pycache__/
 # Ignore all run dirs and their contents by default...
 ai/runner/runs/*/
 # ...except the pinned example run used for infra handoff docs
-!ai/runner/runs/94271b67/
-!ai/runner/runs/94271b67/run.json
+!ai/runner/runs/bee0de0a/
+!ai/runner/runs/bee0de0a/run.json
 ai/runner/claude_agent_docs.md

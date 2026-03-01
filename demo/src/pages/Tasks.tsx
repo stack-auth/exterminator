@@ -1,6 +1,35 @@
 import { useState } from "react";
 import type { Task } from "../store";
 
+// Throw during the next render so the nearest ErrorBoundary can catch the error.
+// This is the standard pattern for surfacing event-handler errors to an ErrorBoundary.
+function useThrowOnError() {
+  const [, setState] = useState<undefined>();
+  return (err: unknown) => setState(() => { throw err; });
+}
+
+// BUG: task.tags is typed as string[] | null but this function assumes it is
+// always an array. Tasks imported from legacy systems have tags: null, which
+// causes a TypeError when .join() is called on null.
+function exportToCSV(tasks: Task[]) {
+  const header = ["id", "title", "priority", "tags", "status"];
+  const rows = tasks.map((task) => [
+    task.id,
+    `"${task.title}"`,
+    task.priority,
+    (task.tags ?? []).join(", "),
+    task.completed ? "done" : "pending",
+  ]);
+  const csv = [header, ...rows].map((r) => r.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "tasks.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const PRIORITY_COLORS = {
   low: "bg-zinc-700 text-zinc-300",
   medium: "bg-amber-900/60 text-amber-300",
@@ -21,6 +50,7 @@ export function Tasks({
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Task["priority"]>("medium");
   const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
+  const throwError = useThrowOnError();
 
   const filtered = tasks.filter((t) => {
     if (filter === "active") return !t.completed;
@@ -66,21 +96,29 @@ export function Tasks({
         </button>
       </form>
 
-      {/* Filters */}
-      <div className="mt-4 flex gap-1">
-        {(["all", "active", "completed"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors capitalize cursor-pointer ${
-              filter === f
-                ? "bg-zinc-800 text-white"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            {f}
-          </button>
-        ))}
+      {/* Filters + Export */}
+      <div className="mt-4 flex items-center justify-between">
+        <div className="flex gap-1">
+          {(["all", "active", "completed"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors capitalize cursor-pointer ${
+                filter === f
+                  ? "bg-zinc-800 text-white"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => { try { exportToCSV(tasks); } catch (err) { throwError(err); } }}
+          className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+        >
+          <span>↓</span> Export CSV
+        </button>
       </div>
 
       {/* Task list */}

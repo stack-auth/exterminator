@@ -52,6 +52,14 @@ const SEED_TASKS: Task[] = [
     tags: ["devops", "staging"],
     createdAt: Date.now() - 900_000,
   },
+  {
+    id: "t-5",
+    title: "Migrate legacy user records",
+    completed: false,
+    priority: "medium",
+    tags: null, // imported from legacy system — tag data unavailable
+    createdAt: Date.now() - 300_000,
+  },
 ];
 
 const SEED_NOTES: Note[] = [
