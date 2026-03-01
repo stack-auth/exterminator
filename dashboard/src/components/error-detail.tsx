@@ -8,6 +8,15 @@ import {
   type PollStatus,
   type PollResponse,
 } from "@/sdk/sandbox";
+import { useGitHubToken, connectGitHub } from "@/sdk/github-token";
+import { createPr } from "@/sdk/pr";
+import type { GitHubConfig } from "@/lib/github";
+
+const GITHUB_CONFIG: GitHubConfig = {
+  owner: "stack-auth",
+  repo: "exterminator-demo-repo",
+  baseBranch: "main",
+};
 
 type ErrorDoc = Doc<"errors">;
 
@@ -120,6 +129,12 @@ function FixedCodeSection({ error }: { error: ErrorDoc }) {
   const sandbox = useSandbox(error._id);
   const [pollResult, setPollResult] = useState<PollResponse | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const githubToken = useGitHubToken();
+  const [prState, setPrState] = useState<{
+    loading: boolean;
+    prUrl: string | null;
+    error: string | null;
+  }>({ loading: false, prUrl: null, error: null });
 
   const sandboxId = sandbox?.sandboxId || "";
 
@@ -187,13 +202,57 @@ function FixedCodeSection({ error }: { error: ErrorDoc }) {
             </span>
           )}
         </div>
-        {status === "completed" && (
+        {status === "completed" && !prState.prUrl && !githubToken && (
           <button
-            disabled
-            className="rounded-md bg-emerald-600/80 px-3 py-1.5 text-xs font-medium text-white opacity-50 cursor-not-allowed"
+            onClick={() => connectGitHub()}
+            className="rounded-md bg-[#24292f] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#32383f] transition-colors cursor-pointer"
           >
-            Create PR
+            Connect GitHub
           </button>
+        )}
+        {status === "completed" && !prState.prUrl && githubToken && (
+          <button
+            onClick={async () => {
+              setPrState({ loading: true, prUrl: null, error: null });
+              const shortId = error._id.slice(-8);
+              const result = await createPr({
+                token: githubToken,
+                config: GITHUB_CONFIG,
+                // TODO: files come from poll data once Daytona is wired up
+                files: [],
+                title: `fix: ${error.message}`,
+                body: [
+                  `## Error`,
+                  `**${error.type}**: ${error.message}`,
+                  "",
+                  error.stack ? `\`\`\`\n${error.stack}\n\`\`\`` : "",
+                  "",
+                  `Page: ${error.pageUrl}`,
+                ].join("\n"),
+                branchName: `exterminator/fix-${shortId}`,
+                commitMessage: `fix: ${error.message}`,
+              });
+              if (result.success && result.prUrl) {
+                setPrState({ loading: false, prUrl: result.prUrl, error: null });
+              } else {
+                setPrState({ loading: false, prUrl: null, error: result.error ?? "Failed to create PR" });
+              }
+            }}
+            disabled={prState.loading}
+            className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {prState.loading ? "Creating..." : "Create PR"}
+          </button>
+        )}
+        {prState.prUrl && (
+          <a
+            href={prState.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md bg-emerald-600/15 border border-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-600/25 transition-colors"
+          >
+            View PR &rarr;
+          </a>
         )}
       </div>
       <div className="p-4">
@@ -218,6 +277,9 @@ function FixedCodeSection({ error }: { error: ErrorDoc }) {
             Fix complete. Result data will appear here once the Daytona
             integration is wired up.
           </p>
+        )}
+        {prState.error && (
+          <p className="mt-2 text-xs text-red-400">{prState.error}</p>
         )}
       </div>
     </div>
