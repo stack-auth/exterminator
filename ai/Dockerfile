@@ -14,6 +14,7 @@ WORKDIR /app/runner
 
 COPY runner/requirements.txt ./
 RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
+RUN playwright install chromium
 RUN playwright install --with-deps chromium
 
 # --- Agent (Node.js) ---
