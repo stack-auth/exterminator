@@ -47,7 +47,7 @@ container. The `pnpm dev` command uses `node --watch` so file changes restart
 automatically:
 
 ```bash
-docker compose up
+docker compose kill && docker compose rm && docker compose up --build
 ```
 
 The dashboard is available at http://localhost:4000 and the demo app at
