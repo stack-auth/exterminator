@@ -1,0 +1,14 @@
+{
+  "name": "@exterminator/ai-infra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "create-snapshot": "tsx create-snapshot.ts"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "^0.148.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

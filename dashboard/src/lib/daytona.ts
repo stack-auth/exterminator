@@ -3,7 +3,7 @@ import type { Sandbox } from "@daytonaio/sdk";
 import { randomUUID } from "crypto";
 
 // ---------------------------------------------------------------------------
-// Types matching the RunContext schema from ai/agent/src/context.ts
+// Types matching the RunContext schema from ai/runner/context.py
 // ---------------------------------------------------------------------------
 
 interface RunInput {
@@ -13,14 +13,64 @@ interface RunInput {
   source_dir: string;
 }
 
+interface LogEntry {
+  ts: string;
+  agent: string;
+  message: string;
+  step?: number | null;
+  detail?: string | null;
+}
+
+interface Progress {
+  currentAgent: string | null;
+  phase: "idle" | "running" | "done" | "error";
+  currentStep: number | null;
+  currentGoal: string | null;
+  lastUpdatedAt: string;
+  log: LogEntry[];
+}
+
+interface ReproduceResult {
+  reproduced: boolean;
+  error_message: string | null;
+  steps: Array<Record<string, unknown>>;
+  browser_logs: Array<Record<string, unknown>>;
+  notes: string;
+  video_path?: string | null;
+}
+
+interface FixResult {
+  summary: string;
+  changed_files: string[];
+}
+
+interface ValidateResult {
+  fixed: boolean;
+  verdict: string;
+  verdict_reason: string;
+  original_error_seen: boolean;
+  steps: Array<Record<string, unknown>>;
+  browser_logs: Array<Record<string, unknown>>;
+  new_errors: Array<Record<string, unknown>>;
+  notes: string;
+  video_path?: string | null;
+}
+
+interface Attempt {
+  n: number;
+  fix: FixResult | null;
+  validate: ValidateResult | null;
+}
+
 interface RunContext {
   runId: string;
   createdAt: string;
   status: "in_progress" | "fixed" | "failed";
   input: RunInput;
-  reproduce: { reproduced: boolean } | null;
-  attempts: Array<{ n: number; fix: unknown; validate: { fixed: boolean } | null }>;
+  reproduce: ReproduceResult | null;
+  attempts: Attempt[];
   resolvedAtAttempt: number | null;
+  progress: Progress;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +93,7 @@ export interface ErrorEvent {
 // Config
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-1";
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-2";
 const MAX_FIX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
@@ -66,20 +116,29 @@ function getDaytonaClient(): Daytona {
 function buildRunContext(event: ErrorEvent, runId: string): RunContext {
   const stackTrace =
     event.stack || `${event.message} at ${event.filename || "unknown"}:${event.lineno ?? 0}:${event.colno ?? 0}`;
+  const now = new Date().toISOString();
 
   return {
     runId,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
     status: "in_progress",
     input: {
       stack_trace: stackTrace,
-      app_url: process.env.APP_URL || event.pageUrl,
+      app_url: "http://localhost:3000",
       app_description: "",
-      source_dir: "/app/runner",
+      source_dir: "/code",
     },
     reproduce: null,
     attempts: [],
     resolvedAtAttempt: null,
+    progress: {
+      currentAgent: null,
+      phase: "idle",
+      currentStep: null,
+      currentGoal: null,
+      lastUpdatedAt: now,
+      log: [],
+    },
   };
 }
 
@@ -88,10 +147,52 @@ function buildEnvVars(): Record<string, string> {
   if (process.env.ANTHROPIC_API_KEY) {
     envVars.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   }
+  if (process.env.BROWSER_USE_API_KEY) {
+    envVars.BROWSER_USE_API_KEY = process.env.BROWSER_USE_API_KEY;
+  }
+  if (process.env.OPENAI_API_KEY) {
+    envVars.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  }
   if (process.env.APP_URL) {
     envVars.APP_URL = process.env.APP_URL;
   }
   return envVars;
+}
+
+// ---------------------------------------------------------------------------
+// Start the demo app inside the sandbox
+// ---------------------------------------------------------------------------
+
+async function startDemoApp(sandbox: Sandbox, envVars: Record<string, string>): Promise<void> {
+  console.log("[daytona] Starting demo app on port 3000...");
+  await sandbox.process.executeCommand(
+    `nohup pnpm dev --port 3000 --host > /tmp/vite.log 2>&1 &`,
+    "/code",
+    envVars,
+    10,
+  );
+
+  // Poll until the server is ready (up to 15 seconds)
+  // Use a Node.js one-liner since curl may not be installed in the container
+  const pollScript = `node -e "
+    const http = require('http');
+    const start = Date.now();
+    (function poll() {
+      if (Date.now() - start > 15000) { process.exit(1); }
+      http.get('http://localhost:3000', (res) => {
+        if (res.statusCode < 500) process.exit(0);
+        setTimeout(poll, 500);
+      }).on('error', () => setTimeout(poll, 500));
+    })();
+  "`;
+
+  const pollResult = await sandbox.process.executeCommand(pollScript, "/code", envVars, 20);
+  if (pollResult.exitCode !== 0) {
+    const viteLog = await sandbox.process.executeCommand("cat /tmp/vite.log", "/code");
+    console.error(`[daytona] Vite log:\n${viteLog.result?.slice(-1000)}`);
+    throw new Error("Demo app failed to start on port 3000 within 15s");
+  }
+  console.log("[daytona] Demo app ready on port 3000");
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +213,10 @@ export async function createSandboxForError(
   });
 
   const ctx = buildRunContext(event, runId);
-  const contextPath = `/app/runner/runs/${runId}.json`;
+
+  // Create the run directory, then upload the context file
+  await sandbox.fs.createFolder(`/app/runner/runs/${runId}`, "0755");
+  const contextPath = `/app/runner/runs/${runId}/run.json`;
   await sandbox.fs.uploadFile(
     Buffer.from(JSON.stringify(ctx, null, 2)),
     contextPath,
@@ -136,6 +240,9 @@ export async function runPipeline(
 ): Promise<void> {
   const envVars = buildEnvVars();
 
+  // --- Stage 0: Start the demo app ---
+  await startDemoApp(sandbox, envVars);
+
   // --- Stage 1: Reproduce ---
   onStatus?.("reproducing");
   console.log(`[daytona] [${runId}] Running reproduce...`);
@@ -146,6 +253,7 @@ export async function runPipeline(
     300,
   );
   console.log(`[daytona] [${runId}] Reproduce exit code: ${reproduceResult.exitCode}`);
+  logCommandOutput(runId, "reproduce", reproduceResult.result);
 
   const afterReproduce = await readContext(sandbox, runId);
   if (!afterReproduce.reproduce?.reproduced) {
@@ -166,6 +274,7 @@ export async function runPipeline(
       300,
     );
     console.log(`[daytona] [${runId}] Fix exit code: ${fixResult.exitCode}`);
+    logCommandOutput(runId, `fix-${attempt}`, fixResult.result);
 
     console.log(`[daytona] [${runId}] Validating fix...`);
     const validateResult = await sandbox.process.executeCommand(
@@ -175,6 +284,7 @@ export async function runPipeline(
       300,
     );
     console.log(`[daytona] [${runId}] Validate exit code: ${validateResult.exitCode}`);
+    logCommandOutput(runId, `validate-${attempt}`, validateResult.result);
 
     const afterValidate = await readContext(sandbox, runId);
     if (afterValidate.status === "fixed") {
@@ -195,9 +305,19 @@ export async function runPipeline(
 // ---------------------------------------------------------------------------
 
 async function readContext(sandbox: Sandbox, runId: string): Promise<RunContext> {
-  const result = await sandbox.process.executeCommand(
-    `cat /app/runner/runs/${runId}.json`,
-    "/app/runner",
-  );
-  return JSON.parse(result.result) as RunContext;
+  // Try the directory layout first (runs/{runId}/run.json), fall back to flat file
+  try {
+    const buf = await sandbox.fs.downloadFile(`/app/runner/runs/${runId}/run.json`);
+    return JSON.parse(buf.toString()) as RunContext;
+  } catch {
+    // Fallback to flat file for robustness
+    const buf = await sandbox.fs.downloadFile(`/app/runner/runs/${runId}.json`);
+    return JSON.parse(buf.toString()) as RunContext;
+  }
+}
+
+function logCommandOutput(runId: string, stage: string, output: string | undefined): void {
+  if (!output) return;
+  const tail = output.slice(-500);
+  console.log(`[daytona] [${runId}] [${stage}] output (last 500 chars):\n${tail}`);
 }

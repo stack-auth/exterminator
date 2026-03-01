@@ -1,7 +1,15 @@
+import { Daytona } from "@daytonaio/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../../../../convex/_generated/api";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+
+// Singleton Daytona client
+let _daytona: Daytona | null = null;
+function getDaytona(): Daytona {
+  if (!_daytona) _daytona = new Daytona();
+  return _daytona;
+}
 
 export type PollStatus = "in_progress" | "completed" | "failed";
 
@@ -50,28 +58,23 @@ export async function GET(
 
     const status = mapStatus(sandbox.status);
 
-    // TODO (Daytona integration):
-    //
-    // Right now we only read the coarse status from Convex. Once the Daytona
-    // snapshot is ready, this route should talk to the agent API *inside* the
-    // sandbox to get the full RunContext:
-    //
-    //   1. Use the Daytona SDK to get a handle on the sandbox by `sandboxId`.
-    //   2. Call the agent's HTTP API:
-    //        GET http://<sandbox>:4000/api/runs/{sandbox.runId}
-    //      (see ai/API_DOCS.md for the full RunContext schema)
-    //   3. Map the RunContext.status → PollStatus:
-    //        "in_progress" → "in_progress"
-    //        "fixed"       → "completed"
-    //        "failed"      → "failed"
-    //   4. Return the full RunContext as `data` (especially when completed):
-    //        - data.attempts[resolvedAtAttempt-1].fix.summary  → fix description
-    //        - data.attempts[resolvedAtAttempt-1].fix.changed_files → files for PR
-    //        - data.progress.log → timeline for the UI
-    //
-    // The `sandbox.runId` is already stored in Convex from when the sandbox
-    // was created (see /api/sandbox/route.ts → sandboxes.create).
-    const data: Record<string, unknown> | null = null;
+    // Read the full RunContext from the Daytona sandbox filesystem
+    let data: Record<string, unknown> | null = null;
+    try {
+      const daytona = getDaytona();
+      const handle = await daytona.get(sandboxId);
+      let buf: Buffer;
+      try {
+        buf = await handle.fs.downloadFile(`/app/runner/runs/${sandbox.runId}/run.json`);
+      } catch {
+        // Fallback to flat file
+        buf = await handle.fs.downloadFile(`/app/runner/runs/${sandbox.runId}.json`);
+      }
+      data = JSON.parse(buf.toString()) as Record<string, unknown>;
+    } catch (e) {
+      // Sandbox may be stopped/archived — fall back to status-only response
+      console.warn(`[poll] Could not read RunContext from sandbox ${sandboxId}:`, e);
+    }
 
     const response: PollResponse = { status, data };
     return Response.json(response);
