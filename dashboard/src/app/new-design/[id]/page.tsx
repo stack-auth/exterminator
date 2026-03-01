@@ -14,7 +14,7 @@ import {
   type PollResponse,
   type LogEntry,
 } from "@/sdk/sandbox";
-const GITHUB_PAT = "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";
+const GITHUB_PAT = process.env.GITHUB_PAT_TOKEN!;
 import { createPr } from "@/sdk/pr";
 import type { GitHubConfig, FileChange } from "@/lib/github";
 
@@ -905,7 +905,7 @@ export default function ErrorDetailPage({
           </Link>
           <div className="flex items-center gap-2">
             {/* Create PR button */}
-            {isFixComplete && sandbox?.sandboxId && pollResult && (
+            {isFixComplete && sandbox?.sandboxId &&  (
               <CreatePrButton
                 error={error}
                 sandboxId={sandbox.sandboxId}
