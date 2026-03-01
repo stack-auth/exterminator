@@ -1,3 +1,5 @@
+import type { eventWithTime } from "rrweb";
+
 export interface CapturedError {
   type: "error" | "unhandledrejection";
   message: string;
@@ -10,10 +12,6 @@ export interface CapturedError {
   userAgent: string;
 }
 
-/**
- * Fire-and-forget POST of captured errors to the configured endpoint.
- * `keepalive` ensures the request survives page navigations / tab close.
- */
 export function dispatchEvents(
   events: CapturedError[],
   endpoint: string,
@@ -23,7 +21,18 @@ export function dispatchEvents(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ events }),
     keepalive: true,
-  }).catch(() => {
-    // Never let the monitoring script throw
-  });
+  }).catch(() => {});
+}
+
+export function dispatchRecording(
+  errorTimestamp: number,
+  recording: eventWithTime[],
+  endpoint: string,
+): void {
+  const recordingEndpoint = endpoint.replace(/\/events$/, "/recording");
+  fetch(recordingEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ errorTimestamp, events: recording }),
+  }).catch(() => {});
 }
