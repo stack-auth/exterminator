@@ -9,9 +9,78 @@ export type SandboxId = Id<"sandboxes">;
 
 export type PollStatus = "in_progress" | "completed" | "failed";
 
+// ---------------------------------------------------------------------------
+// RunContext types (mirrored from lib/daytona.ts for client use)
+// ---------------------------------------------------------------------------
+
+export interface LogEntry {
+  ts: string;
+  agent: string;
+  message: string;
+  step?: number | null;
+  detail?: string | null;
+}
+
+export interface Progress {
+  currentAgent: string | null;
+  phase: "idle" | "running" | "done" | "error";
+  currentStep: number | null;
+  currentGoal: string | null;
+  lastUpdatedAt: string;
+  log: LogEntry[];
+}
+
+export interface ReproduceResult {
+  reproduced: boolean;
+  error_message: string | null;
+  steps: Array<Record<string, unknown>>;
+  browser_logs: Array<Record<string, unknown>>;
+  notes: string;
+  video_path?: string | null;
+}
+
+export interface FixResult {
+  summary: string;
+  changed_files: string[];
+}
+
+export interface ValidateResult {
+  fixed: boolean;
+  verdict: string;
+  verdict_reason: string;
+  original_error_seen: boolean;
+  steps: Array<Record<string, unknown>>;
+  browser_logs: Array<Record<string, unknown>>;
+  new_errors: Array<Record<string, unknown>>;
+  notes: string;
+  video_path?: string | null;
+}
+
+export interface Attempt {
+  n: number;
+  fix: FixResult | null;
+  validate: ValidateResult | null;
+}
+
+export interface RunContext {
+  runId: string;
+  createdAt: string;
+  status: "in_progress" | "fixed" | "failed";
+  input: {
+    stack_trace: string;
+    app_url: string;
+    app_description: string;
+    source_dir: string;
+  };
+  reproduce: ReproduceResult | null;
+  attempts: Attempt[];
+  resolvedAtAttempt: number | null;
+  progress: Progress;
+}
+
 export interface PollResponse {
   status: PollStatus;
-  data: Record<string, unknown> | null;
+  data: RunContext | null;
 }
 
 export function useSandbox(errorId: Id<"errors">) {
