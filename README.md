@@ -34,9 +34,14 @@ Next.js app backed by [Convex](https://convex.dev/) for storing and viewing capt
 ### First-time setup
 
 ```bash
+cd ai && daytona snapshot create exterminator-ai --dockerfile ./Dockerfile  # build daytona snapshot
+```
+
+```bash
 cd dashboard
 pnpm install
 npx convex dev          # starts a local Convex backend, generates types, creates .env.local
+  
 ```
 
 `npx convex dev` will prompt you to either log in or start without an account (local mode). It creates a `.env.local` with `NEXT_PUBLIC_CONVEX_URL` automatically.
