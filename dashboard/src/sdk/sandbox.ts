@@ -7,6 +7,13 @@ import type { ErrorEvent } from "@/lib/daytona";
 
 export type SandboxId = Id<"sandboxes">;
 
+export type PollStatus = "in_progress" | "completed" | "failed";
+
+export interface PollResponse {
+  status: PollStatus;
+  data: Record<string, unknown> | null;
+}
+
 export function useSandbox(errorId: Id<"errors">) {
   return useQuery(api.sandboxes.getByErrorId, { errorId });
 }
@@ -27,4 +34,14 @@ export async function startSandbox(
   } catch {
     return null;
   }
+}
+
+export async function pollSandboxStatus(
+  sandboxId: string,
+): Promise<PollResponse> {
+  const res = await fetch(`/api/sandbox/${encodeURIComponent(sandboxId)}`);
+  if (!res.ok) {
+    return { status: "failed", data: null };
+  }
+  return res.json();
 }

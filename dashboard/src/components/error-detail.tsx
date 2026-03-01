@@ -1,21 +1,34 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import type { Doc } from "../../../convex/_generated/dataModel";
+import {
+  useSandbox,
+  pollSandboxStatus,
+  type PollStatus,
+  type PollResponse,
+} from "@/sdk/sandbox";
 
 type ErrorDoc = Doc<"errors">;
 
+const POLL_INTERVAL_MS = 3000;
+
 function formatDate(ts: number): string {
   const d = new Date(ts);
-  return d.toLocaleDateString("en-US", {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-  }) + ", " + d.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+  return (
+    d.toLocaleDateString("en-US", {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+    }) +
+    ", " +
+    d.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    })
+  );
 }
 
 function Badge({
@@ -86,10 +99,135 @@ function StackTrace({ stack }: { stack?: string }) {
   );
 }
 
+function statusBadge(status: PollStatus) {
+  switch (status) {
+    case "in_progress":
+      return <Badge label="In Progress" color="blue" />;
+    case "completed":
+      return <Badge label="Fixed" color="green" />;
+    case "failed":
+      return <Badge label="Failed" color="red" />;
+  }
+}
+
+function mapConvexStatus(convexStatus: string): PollStatus {
+  if (convexStatus === "fixed") return "completed";
+  if (convexStatus === "failed") return "failed";
+  return "in_progress";
+}
+
+function FixedCodeSection({ error }: { error: ErrorDoc }) {
+  const sandbox = useSandbox(error._id);
+  const [pollResult, setPollResult] = useState<PollResponse | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const sandboxId = sandbox?.sandboxId || "";
+
+  useEffect(() => {
+    if (!sandboxId) return;
+
+    async function poll() {
+      const result = await pollSandboxStatus(sandboxId);
+      setPollResult(result);
+
+      if (result.status === "completed" || result.status === "failed") {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      }
+    }
+
+    poll();
+    intervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [sandboxId]);
+
+  if (sandbox === undefined) {
+    return (
+      <div className="rounded-lg border border-[#1e2a3a] bg-[#161b22] p-4">
+        <div className="flex items-center gap-3 text-sm text-[#484f58]">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#484f58]" />
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
+  if (sandbox === null) {
+    return (
+      <div className="rounded-lg border border-[#1e2a3a] bg-[#161b22] p-4">
+        <div className="flex items-center gap-3 text-sm text-[#484f58] italic">
+          <span className="inline-block h-2 w-2 rounded-full bg-[#484f58]" />
+          No sandbox created for this error
+        </div>
+      </div>
+    );
+  }
+
+  // Use poll result if available, otherwise fall back to Convex status directly
+  // (handles cases where sandboxId is empty, e.g. creation failed)
+  const status = pollResult?.status ?? mapConvexStatus(sandbox.status);
+  const data = pollResult?.data ?? null;
+
+  return (
+    <div className="rounded-lg border border-[#1e2a3a] bg-[#161b22] overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#1e2a3a]">
+        <div className="flex items-center gap-3">
+          {statusBadge(status)}
+          {status === "in_progress" && (
+            <span className="text-xs text-[#484f58]">
+              Sandbox: {sandbox.sandboxId.slice(0, 8)}...
+            </span>
+          )}
+        </div>
+        {status === "completed" && (
+          <button
+            disabled
+            className="rounded-md bg-emerald-600/80 px-3 py-1.5 text-xs font-medium text-white opacity-50 cursor-not-allowed"
+          >
+            Create PR
+          </button>
+        )}
+      </div>
+      <div className="p-4">
+        {status === "in_progress" && (
+          <div className="flex items-center gap-2 text-sm text-[#8b949e]">
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+            AI agent is analyzing this error...
+          </div>
+        )}
+        {status === "failed" && (
+          <p className="text-sm text-red-400">
+            The AI agent was unable to fix this error.
+          </p>
+        )}
+        {status === "completed" && data && (
+          <pre className="overflow-x-auto text-xs text-[#c9d1d9] font-mono whitespace-pre-wrap">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        )}
+        {status === "completed" && !data && (
+          <p className="text-sm text-emerald-400">
+            Fix complete. Result data will appear here once the Daytona
+            integration is wired up.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ErrorDetail({ error }: { error: ErrorDoc }) {
   const source = error.filename
     ? `${error.filename}`
-    : error.stack?.split("\n")[1]?.trim()?.match(/\((.*?)\)/)?.[1] ?? "unknown";
+    : (error.stack?.split("\n")[1]?.trim()?.match(/\((.*?)\)/)?.[1] ?? "unknown");
 
   const location =
     error.lineno != null
@@ -114,17 +252,12 @@ export function ErrorDetail({ error }: { error: ErrorDoc }) {
         </h1>
       </div>
 
-      {/* Live Progress (dummy) */}
+      {/* Fixed Code */}
       <section>
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[#8b949e]">
-          Live Progress
+          Fixed Code
         </h2>
-        <div className="rounded-lg border border-[#1e2a3a] bg-[#161b22] p-4">
-          <div className="flex items-center gap-3 text-sm text-[#484f58] italic">
-            <span className="inline-block h-2 w-2 rounded-full bg-[#484f58]" />
-            Awaiting AI analysis...
-          </div>
-        </div>
+        <FixedCodeSection error={error} />
       </section>
 
       {/* Error Info */}

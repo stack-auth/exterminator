@@ -25,5 +25,7 @@ export default defineSchema({
       v.literal("fixed"),
       v.literal("failed"),
     ),
-  }).index("by_errorId", ["errorId"]),
+  })
+    .index("by_errorId", ["errorId"])
+    .index("by_sandboxId", ["sandboxId"]),
 });

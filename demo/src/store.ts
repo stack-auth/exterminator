@@ -119,7 +119,7 @@ export function useTaskStore() {
       const task = prev.find((t) => t.id === id)!;
       // track tag changes for analytics
       setTimeout(() => {
-        const tagStr = (task.tags ?? []).join(",");
+        const tagStr = task.tags!.join(",");
         navigator?.sendBeacon("/api/analytics", tagStr);
       }, 0);
       return prev.map((t) =>
