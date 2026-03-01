@@ -9,6 +9,7 @@
  */
 
 import type * as errors from "../errors.js";
+import type * as sandboxes from "../sandboxes.js";
 
 import type {
   ApiFromModules,
@@ -18,6 +19,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   errors: typeof errors;
+  sandboxes: typeof sandboxes;
 }>;
 
 /**

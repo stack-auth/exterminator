@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { ErrorId } from "@/sdk/errors";
+import { useSandbox, startSandbox } from "@/sdk/sandbox";
 import type { Doc } from "../../../convex/_generated/dataModel";
 
 type ErrorDoc = Doc<"errors">;
@@ -44,6 +46,64 @@ function errorLabel(type: string): string {
   return "Error";
 }
 
+function ErrorCard({
+  err,
+  isSelected,
+  onSelect,
+}: {
+  err: ErrorDoc;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const sandbox = useSandbox(err._id);
+  const triggeredRef = useRef(false);
+
+  useEffect(() => {
+    if (sandbox !== undefined && sandbox === null && !triggeredRef.current) {
+      triggeredRef.current = true;
+      startSandbox(err._id, err);
+    }
+  }, [sandbox, err]);
+
+  return (
+    <li>
+      <button
+        onClick={onSelect}
+        className={`w-full text-left px-4 py-3 border-b border-[#1e2a3a] transition-colors cursor-pointer ${
+          isSelected
+            ? "bg-[#161b22]"
+            : "hover:bg-[#161b22]/60"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                  err.type === "error"
+                    ? "bg-red-500/15 text-red-400"
+                    : "bg-amber-500/15 text-amber-400"
+                }`}
+              >
+                {errorLabel(err.type)}
+              </span>
+            </div>
+            <p className="text-sm font-medium text-[#e6edf3] truncate leading-snug">
+              {err.message}
+            </p>
+            <p className="mt-0.5 truncate font-mono text-xs text-[#484f58]">
+              {extractSource(err)}
+            </p>
+          </div>
+          <span className="shrink-0 pt-1 text-[11px] text-[#484f58]">
+            {timeAgo(err.timestamp)}
+          </span>
+        </div>
+      </button>
+    </li>
+  );
+}
+
 export function ErrorSidebar({
   errors,
   selectedId,
@@ -71,46 +131,14 @@ export function ErrorSidebar({
         </div>
       ) : (
         <ul>
-          {errors.map((err) => {
-            const isSelected = err._id === selectedId;
-            return (
-              <li key={err._id}>
-                <button
-                  onClick={() => onSelect(err._id)}
-                  className={`w-full text-left px-4 py-3 border-b border-[#1e2a3a] transition-colors cursor-pointer ${
-                    isSelected
-                      ? "bg-[#161b22]"
-                      : "hover:bg-[#161b22]/60"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span
-                          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                            err.type === "error"
-                              ? "bg-red-500/15 text-red-400"
-                              : "bg-amber-500/15 text-amber-400"
-                          }`}
-                        >
-                          {errorLabel(err.type)}
-                        </span>
-                      </div>
-                      <p className="text-sm font-medium text-[#e6edf3] truncate leading-snug">
-                        {err.message}
-                      </p>
-                      <p className="mt-0.5 truncate font-mono text-xs text-[#484f58]">
-                        {extractSource(err)}
-                      </p>
-                    </div>
-                    <span className="shrink-0 pt-1 text-[11px] text-[#484f58]">
-                      {timeAgo(err.timestamp)}
-                    </span>
-                  </div>
-                </button>
-              </li>
-            );
-          })}
+          {errors.map((err) => (
+            <ErrorCard
+              key={err._id}
+              err={err}
+              isSelected={err._id === selectedId}
+              onSelect={() => onSelect(err._id)}
+            />
+          ))}
         </ul>
       )}
     </aside>
