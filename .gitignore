@@ -137,3 +137,16 @@ out
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS / IDE
+.DS_Store
+.cursor/
+
+# Agent run artifacts (local only, not for review)
+ai/runner/runs/
+ai/runner/claude_agent_docs.md

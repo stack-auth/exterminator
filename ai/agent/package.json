@@ -2,8 +2,14 @@
   "name": "@exterminator/agent",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test:prompt": "node src/test-prompt.js",
+    "test:run": "node src/test-run.js"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
   }
 }

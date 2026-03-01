@@ -1,0 +1,290 @@
+"""
+Browser-use agent runner for the Reproduce and Validate steps.
+
+Reads all inputs from the pipeline context file (runs/{run_id}.json) and
+writes results back to the same file -- no stdout threading needed.
+
+Usage:
+    # Start a new run (reproduce against a fresh bug):
+    python run_browser_agent.py reproduce --run-id <id>
+
+    # Validate after a fix has been applied:
+    python run_browser_agent.py validate --run-id <id>
+
+    # Omit --run-id to use the most recently created run.
+
+The run context must already exist (created by context.py or the TS wrapper).
+The app must be running locally at the URL stored in context.input.app_url.
+
+LLM: set BROWSER_USE_API_KEY (preferred), ANTHROPIC_API_KEY, or OPENAI_API_KEY in .env.
+"""
+
+import asyncio
+import os
+import sys
+from typing import Optional
+
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+from build_prompt import build_prompt
+from context import PipelineContext
+
+load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# Structured output schemas
+#
+# browser-use enforces these via output_model_schema: it auto-appends the JSON
+# schema to the task and forces a typed `done` call. We then use
+# Model.model_validate_json(result.final_result()) to deserialize -- no manual
+# JSON parsing needed.
+# ---------------------------------------------------------------------------
+
+class ReproduceOutput(BaseModel):
+    reproduced: bool = Field(description="Whether the exact error was triggered")
+    errorMessage: Optional[str] = Field(
+        None, description="Exact console error text, or null if not reproduced"
+    )
+    steps: list[str] = Field(
+        default_factory=list,
+        description="Every browser action taken, in plain English, in order",
+    )
+    browserLogs: list[str] = Field(
+        default_factory=list,
+        description="All console output captured during the session",
+    )
+    notes: str = Field(
+        "", description="Context for the Fix agent: app state, root cause hypothesis"
+    )
+
+
+class ValidateOutput(BaseModel):
+    fixed: bool = Field(description="True only if the original error no longer appears")
+    verdict: str = Field(
+        description="One of: fixed | error_persists | different_error | inconclusive"
+    )
+    verdictReason: str = Field(description="Why you reached this verdict")
+    originalErrorSeen: bool = Field(
+        description="Whether the original error message appeared at all"
+    )
+    steps: list[str] = Field(default_factory=list)
+    browserLogs: list[str] = Field(default_factory=list)
+    newErrors: list[str] = Field(
+        default_factory=list,
+        description="New errors that appeared that weren't in the original stack trace",
+    )
+    notes: str = Field("")
+
+
+# ---------------------------------------------------------------------------
+# LLM selection
+# ---------------------------------------------------------------------------
+
+def get_llm():
+    if os.getenv("BROWSER_USE_API_KEY"):
+        from browser_use import ChatBrowserUse
+        print("  using ChatBrowserUse (bu-latest)")
+        return ChatBrowserUse()
+    elif os.getenv("ANTHROPIC_API_KEY"):
+        from langchain_anthropic import ChatAnthropic
+        print("  using Anthropic claude-3-5-sonnet-20241022")
+        return ChatAnthropic(model="claude-3-5-sonnet-20241022", timeout=120, stop=None)
+    elif os.getenv("OPENAI_API_KEY"):
+        from langchain_openai import ChatOpenAI
+        print("  using OpenAI gpt-4o")
+        return ChatOpenAI(model="gpt-4o", timeout=120)
+    else:
+        print("Error: set BROWSER_USE_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY in .env")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Source file discovery
+# ---------------------------------------------------------------------------
+
+SOURCE_EXTS = {".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".py", ".json", ".vue", ".svelte"}
+
+def find_source_files(source_dir: str) -> list[str]:
+    """Return absolute paths of source files browser-use can read via available_file_paths."""
+    paths = []
+    for root, dirs, files in os.walk(source_dir):
+        # Skip build artifacts and dependency dirs
+        dirs[:] = [d for d in dirs if d not in {"node_modules", ".git", "dist", "build", ".next", "__pycache__"}]
+        for f in files:
+            if os.path.splitext(f)[1] in SOURCE_EXTS:
+                paths.append(os.path.join(root, f))
+    return paths
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+async def main():
+    args = sys.argv[1:]
+    if not args or args[0] not in ("reproduce", "validate"):
+        print("Usage: python run_browser_agent.py <reproduce|validate> [--run-id <id>]")
+        sys.exit(1)
+
+    agent_name = args[0]
+    run_id = None
+    if "--run-id" in args:
+        idx = args.index("--run-id")
+        run_id = args[idx + 1]
+
+    ctx = PipelineContext.load(run_id) if run_id else PipelineContext.load_latest()
+    print(f"\nRun: {ctx.run_id}  status: {ctx.status}")
+
+    # Discover source files so the agent can call read_file on them if needed.
+    # For reproduce: helps correlate stack trace symbols with actual code.
+    # For validate: helps confirm the fix was applied in the right place.
+    source_files: list[str] = []
+    if ctx.input.source_dir and os.path.isdir(ctx.input.source_dir):
+        source_files = find_source_files(ctx.input.source_dir)
+
+    if agent_name == "reproduce":
+        prompt_vars = {
+            "APP_URL": ctx.input.app_url,
+            "APP_DESCRIPTION": ctx.input.app_description,
+            "STACK_TRACE": ctx.input.stack_trace,
+        }
+        output_schema = ReproduceOutput
+
+    else:  # validate
+        if not ctx.reproduce:
+            print("Error: no reproduce result in context -- run reproduce first")
+            sys.exit(1)
+        prompt_vars = {
+            "APP_URL": ctx.input.app_url,
+            "ORIGINAL_STACK_TRACE": ctx.input.stack_trace,
+            "REPRO_STEPS": ctx.repro_steps_json,
+            "FIX_DESCRIPTION": ctx.fix_description,
+        }
+        output_schema = ValidateOutput
+
+    task = build_prompt(agent_name, prompt_vars)
+    llm = get_llm()
+
+    print(f"Running {agent_name.upper()} agent")
+    print(f"  app:    {ctx.input.app_url}")
+    if source_files:
+        print(f"  source: {len(source_files)} file(s) available for reading")
+    print("─" * 60)
+
+    ctx.agent_start(agent_name)
+
+    async def on_step(browser_state, model_output, n_steps: int) -> None:
+        # Build a human-readable label. Priority:
+        #   1. next_goal    -- agent's own "what I'm about to do" sentence
+        #   2. evaluation_previous_goal -- "Success/Failed: ..." from last step
+        #   3. action.model_dump() -- serialize the concrete action taken
+        label = (getattr(model_output, "next_goal", None) or "").strip()
+
+        if not label:
+            eval_prev = (getattr(model_output, "evaluation_previous_goal", None) or "").strip()
+            if eval_prev:
+                label = eval_prev.split("\n")[0]
+
+        if not label:
+            actions = getattr(model_output, "action", None) or []
+            if not isinstance(actions, list):
+                actions = [actions]
+            if actions:
+                data = actions[0].model_dump(exclude_none=True, mode="json")
+                action_name = next(iter(data), "action")
+                params = data.get(action_name, {})
+                hint = ""
+                if isinstance(params, dict):
+                    hint = (
+                        params.get("url")
+                        or params.get("text", "")[:60]
+                        or params.get("query", "")[:60]
+                        or str(params)[:60]
+                    )
+                else:
+                    hint = str(params)[:60]
+                label = f"{action_name}({hint})" if hint else action_name
+
+        label = label or f"step {n_steps}"
+        url = getattr(browser_state, "url", None)
+        title = getattr(browser_state, "title", None)
+        detail = f"{url} | {title}" if title else url
+
+        # Surface any browser-side JS errors as their own log entries
+        for err in (getattr(browser_state, "browser_errors", None) or []):
+            ctx.agent_step(agent_name, n_steps, f"[browser error] {err[:120]}", detail=url)
+            print(f"  [step {n_steps}] ⚠ browser error: {err[:80]}")
+
+        print(f"  [step {n_steps}] {label[:80]}")
+        ctx.agent_step(agent_name, n_steps, label[:120], detail=detail)
+
+    from browser_use import Agent
+    agent = Agent(
+        task=task,
+        llm=llm,
+        max_failures=3,
+        output_model_schema=output_schema,    # enforces typed JSON output
+        available_file_paths=source_files or None,  # lets agent read source files
+        register_new_step_callback=on_step,
+    )
+    history = await agent.run(max_steps=20)
+
+    raw = history.final_result()
+    print("\n" + "─" * 60)
+    print(f"RESULT ({agent_name.upper()})")
+    print("─" * 60)
+    print(raw)
+
+    # Deserialize -- output_model_schema guarantees valid JSON matching the schema
+    try:
+        if agent_name == "reproduce":
+            out = ReproduceOutput.model_validate_json(raw)
+        else:
+            out = ValidateOutput.model_validate_json(raw)
+    except Exception as e:
+        print(f"\n[WARN] Structured output parse failed: {e}")
+        print("Saving raw text as notes and marking as not reproduced/fixed")
+        if agent_name == "reproduce":
+            out = ReproduceOutput(reproduced=False, notes=raw or "")
+        else:
+            out = ValidateOutput(
+                fixed=False, verdict="inconclusive",
+                verdictReason="parse error", notes=raw or "",
+            )
+
+    if agent_name == "reproduce":
+        ctx.set_reproduce_result(
+            reproduced=out.reproduced,
+            error_message=out.errorMessage,
+            steps=out.steps,
+            browser_logs=out.browserLogs,
+            notes=out.notes,
+        )
+        ctx.agent_done(agent_name, f"reproduced={out.reproduced}")
+        print(f"\nReproduced: {out.reproduced}")
+        print(f"Context saved → runs/{ctx.run_id}.json")
+
+    else:
+        ctx.set_validate_result(
+            fixed=out.fixed,
+            verdict=out.verdict,
+            verdict_reason=out.verdictReason,
+            original_error_seen=out.originalErrorSeen,
+            steps=out.steps,
+            browser_logs=out.browserLogs,
+            new_errors=out.newErrors,
+            notes=out.notes,
+        )
+        if out.fixed:
+            ctx.mark_resolved()
+            ctx.agent_done(agent_name, "fix validated -- error is gone")
+            print(f"\nFixed! Run resolved at attempt {ctx.resolved_at_attempt}")
+        else:
+            ctx.agent_done(agent_name, f"not fixed: {out.verdict}")
+            print(f"\nNot fixed. Verdict: {out.verdict}")
+            print("→ Run run_fix.py to attempt another fix")
+        print(f"Context saved → runs/{ctx.run_id}.json")
+
+
+asyncio.run(main())
