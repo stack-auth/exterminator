@@ -6,13 +6,20 @@ Build and run the container with both the agent server and runner baked in:
 
 ```bash
 docker build -t exterminator-agent .
-docker run -p 4000:4000 \
+docker run -p 4000:4000 -p 3000:3000 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
   -e BROWSER_USE_API_KEY=bu_... \
   exterminator-agent
 ```
 
-The server starts on port **4000** and exposes:
+The container starts two services:
+
+- **Port 3000** — demo app served from `/code`
+  ([stack-auth/exterminator-demo-repo](https://github.com/stack-auth/exterminator-demo-repo),
+  cloned at build time)
+- **Port 4000** — control interface + REST API
+
+The control interface on port **4000** exposes:
 
 - **`GET /`** — control interface (dashboard UI)
 - **`POST /api/runs`** — start a new bug-fix run
@@ -43,7 +50,8 @@ automatically:
 docker compose up
 ```
 
-The dashboard is available at http://localhost:4000.
+The dashboard is available at http://localhost:4000 and the demo app at
+http://localhost:3000.
 
 The local `agent/` directory is mounted at `/app/agent` and `runner/` at
 `/app/runner` inside the container, so any edits you make on the host are
@@ -68,6 +76,7 @@ Override with the `RUNNER_DIR` environment variable if needed.
 |----------------|---------|------------------------------------------------------|
 | `/app/agent`   | Node.js | Express server + control UI + pipeline orchestrator  |
 | `/app/runner`  | Python  | Reproduce / fix / validate agents (browser-use, Claude CLI) |
+| `/code`        | —       | Demo app source (cloned from GitHub, served on :3000)|
 
 The image also ships with **Playwright + Chromium** and the **Claude CLI**
 pre-installed so the runner scripts work out of the box.

@@ -235,6 +235,7 @@ const $ = (s) => document.querySelector(s);
 
 let polling = null;
 let lastLogLen = 0;
+let lastRunId = null;
 
 async function poll() {
   try {
@@ -242,7 +243,8 @@ async function poll() {
     const data = await res.json();
     render(data);
     $("#hdr-dot").classList.remove("off");
-  } catch {
+  } catch (err) {
+    console.error("[poll]", err);
     $("#hdr-dot").classList.add("off");
   }
 }
@@ -267,7 +269,14 @@ function render(s) {
   if (!hasRun) {
     toggle("#banner", false);
     lastLogLen = 0;
+    lastRunId = null;
     return;
+  }
+
+  if (ctx && ctx.runId !== lastRunId) {
+    lastRunId = ctx.runId;
+    lastLogLen = 0;
+    $("#log-container").innerHTML = "";
   }
 
   // Header

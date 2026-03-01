@@ -156,7 +156,7 @@ __pycache__/
 
 # Agent run artifacts (local only, not for review)
 # Ignore all run dirs and their contents by default...
-ai/runner/runs/*/
+ai/runner/runs/*
 # ...except the pinned example run used for infra handoff docs
 !ai/runner/runs/bee0de0a/
 !ai/runner/runs/bee0de0a/run.json

@@ -3,9 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: pnpm --dir /app/agent dev
+    command: >
+      sh -c "python3 -m http.server 3000 --directory /code &
+             pnpm --dir /app/agent dev"
     ports:
       - "4000:4000"
+      - "3000:3000"
     env_file:
       - runner/.env
     volumes:
