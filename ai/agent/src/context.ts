@@ -144,23 +144,41 @@ export function createRunContext(
   };
 }
 
+function resolveRunPath(runId: string): string {
+  const dirPath = join(RUNS_DIR, runId, "run.json");
+  const flat = join(RUNS_DIR, `${runId}.json`);
+  const { existsSync } = require("fs");
+  if (existsSync(dirPath)) return dirPath;
+  if (existsSync(flat)) return flat;
+  return dirPath;
+}
+
 export function readRunContext(runId: string): RunContext {
-  const path = join(RUNS_DIR, `${runId}.json`);
-  return JSON.parse(readFileSync(path, "utf-8")) as RunContext;
+  return JSON.parse(readFileSync(resolveRunPath(runId), "utf-8")) as RunContext;
 }
 
 export function writeRunContext(ctx: RunContext): void {
-  const path = join(RUNS_DIR, `${ctx.runId}.json`);
-  writeFileSync(path, JSON.stringify(ctx, null, 2));
+  const { mkdirSync } = require("fs");
+  const runDir = join(RUNS_DIR, ctx.runId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, "run.json"), JSON.stringify(ctx, null, 2));
 }
 
 export function readLatestRunContext(): RunContext {
-  const { readdirSync, statSync } = require("fs");
-  const files = readdirSync(RUNS_DIR)
-    .filter((f: string) => f.endsWith(".json"))
-    .map((f: string) => ({ name: f, mtime: statSync(join(RUNS_DIR, f)).mtime }))
-    .sort((a: any, b: any) => b.mtime - a.mtime);
+  const { readdirSync, statSync, existsSync } = require("fs");
+  const entries: { id: string; mtime: Date }[] = [];
 
-  if (files.length === 0) throw new Error("No runs found in runner/runs/");
-  return readRunContext(files[0].name.replace(".json", ""));
+  for (const entry of readdirSync(RUNS_DIR)) {
+    const dirJson = join(RUNS_DIR, entry, "run.json");
+    const flatJson = join(RUNS_DIR, `${entry}.json`);
+    if (existsSync(dirJson)) {
+      entries.push({ id: entry, mtime: statSync(dirJson).mtime });
+    } else if (entry.endsWith(".json") && statSync(join(RUNS_DIR, entry)).isFile()) {
+      entries.push({ id: entry.replace(".json", ""), mtime: statSync(join(RUNS_DIR, entry)).mtime });
+    }
+  }
+
+  entries.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+  if (entries.length === 0) throw new Error("No runs found in runner/runs/");
+  return readRunContext(entries[0].id);
 }
