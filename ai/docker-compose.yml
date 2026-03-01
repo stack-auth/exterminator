@@ -4,6 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
     command: pnpm --dir /app/agent dev
+    ports:
+      - "4000:4000"
+    env_file:
+      - runner/.env
     volumes:
       - ./agent:/app/agent
       - agent_node_modules:/app/agent/node_modules

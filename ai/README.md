@@ -2,35 +2,35 @@
 
 ## Production
 
-Build and run the container with both the agent and runner baked in:
+Build and run the container with both the agent server and runner baked in:
 
 ```bash
 docker build -t exterminator-agent .
-docker run exterminator-agent
-```
-
-The default `CMD` starts the Node.js agent (`pnpm start`). To run
-runner scripts instead, override the command:
-
-```bash
-# create a run
-docker run exterminator-agent python3 /app/runner/run_browser_agent.py reproduce --run-id $RUN_ID
-
-# apply a fix
-docker run exterminator-agent python3 /app/runner/run_fix.py --run-id $RUN_ID
-
-# validate
-docker run exterminator-agent python3 /app/runner/run_browser_agent.py validate --run-id $RUN_ID
-```
-
-Pass API keys as environment variables (do **not** bake them into the image):
-
-```bash
-docker run \
+docker run -p 4000:4000 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
   -e BROWSER_USE_API_KEY=bu_... \
-  -e APP_URL=http://host.docker.internal:3000 \
-  exterminator-agent python3 /app/runner/run_browser_agent.py reproduce --run-id $RUN_ID
+  exterminator-agent
+```
+
+The server starts on port **4000** and exposes:
+
+- **`GET /`** — control interface (dashboard UI)
+- **`POST /api/runs`** — start a new bug-fix run
+- **`GET /api/runs/current`** — poll the current run state
+- **`DELETE /api/runs/current`** — stop & reset the current run
+- **`GET /api/runs/:runId`** — fetch any run by ID
+- **`GET /api/runs`** — list all runs
+
+See [API_DOCS.md](./API_DOCS.md) for full documentation.
+
+### Running runner scripts directly
+
+You can still invoke the Python scripts manually by overriding the command:
+
+```bash
+docker run exterminator-agent python3 /app/runner/run_browser_agent.py reproduce --run-id $RUN_ID
+docker run exterminator-agent python3 /app/runner/run_fix.py --run-id $RUN_ID
+docker run exterminator-agent python3 /app/runner/run_browser_agent.py validate --run-id $RUN_ID
 ```
 
 ## Development
@@ -43,23 +43,31 @@ automatically:
 docker compose up
 ```
 
+The dashboard is available at http://localhost:4000.
+
 The local `agent/` directory is mounted at `/app/agent` and `runner/` at
 `/app/runner` inside the container, so any edits you make on the host are
 visible in the running container instantly. `node_modules` is kept in a named
-volume to avoid conflicts with the host.
+volume to avoid conflicts with the host. API keys are loaded from
+`runner/.env` via the `env_file` directive in docker-compose.
 
-### Running runner scripts in the dev container
+### Running without Docker
 
 ```bash
-docker compose exec agent python3 /app/runner/run_browser_agent.py reproduce --run-id $RUN_ID
+cd ai/agent
+pnpm install
+pnpm start        # or: pnpm dev (auto-restart on changes)
 ```
+
+The server expects the runner at `../runner` relative to `agent/src/`.
+Override with the `RUNNER_DIR` environment variable if needed.
 
 ## What's in the image
 
 | Directory      | Runtime | Purpose                                              |
 |----------------|---------|------------------------------------------------------|
-| `/app/agent`   | Node.js | Core agent code (pnpm)                               |
-| `/app/runner`  | Python  | Reproduce / fix / validate pipeline (browser-use, Claude CLI) |
+| `/app/agent`   | Node.js | Express server + control UI + pipeline orchestrator  |
+| `/app/runner`  | Python  | Reproduce / fix / validate agents (browser-use, Claude CLI) |
 
 The image also ships with **Playwright + Chromium** and the **Claude CLI**
 pre-installed so the runner scripts work out of the box.
