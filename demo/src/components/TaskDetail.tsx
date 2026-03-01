@@ -13,16 +13,11 @@ export function TaskDetail({
   task: Task;
   onClose: () => void;
 }) {
-  const formattedDue = task.dueDate
-    ? (() => {
-        const [year, month, day] = task.dueDate.split("-").map(Number);
-        return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-          month: "long",
-          day: "numeric",
-          year: "numeric",
-        });
-      })()
-    : "No due date";
+  const [year, month, day] = task.dueDate.split("-").map(Number);
+  const formattedDue = new Date(year, month - 1, day).toLocaleDateString(
+    "en-US",
+    { month: "long", day: "numeric", year: "numeric" },
+  );
 
   const initials = task.assignee.name
     .split(" ")
