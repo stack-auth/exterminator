@@ -127,6 +127,6 @@ The snapshot name defaults to `exterminator-ai-8` and is configurable via `DAYTO
 3. **Reproduce agent** (`browser-use` + Python) navigates the live app inside the sandbox, confirms the crash, and records a video.
 4. **Fix agent** (`claude-code` SDK) reads the source files implicated in the stack trace and applies a targeted patch. If a previous fix introduced a regression, the agent receives that context and tries again.
 5. **Validate agent** (`browser-use` + Python) re-runs the app, confirms the original crash is gone, performs a full regression sweep across all pages, and records a video. If a new error is found, the loop repeats from step 4.
-6. On success, the fix agent opens a **GitHub PR** with the patched files.
+6. On success, a **GitHub PR** is opened with the patched files for human review and merging.
 
 All progress is written to Convex in real time and streamed to the dashboard UI.
