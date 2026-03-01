@@ -43,7 +43,7 @@ export interface ErrorEvent {
 // Config
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai";
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-1";
 const MAX_FIX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
