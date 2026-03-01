@@ -346,12 +346,14 @@ async def main():
     run_dir = ctx.run_dir   # runs/<run_id>/  (created by the property)
 
     from browser_use import Agent, BrowserSession
-    session = BrowserSession(
-        record_video_dir=str(run_dir),
+    from browser_use.browser.profile import BrowserProfile
+    profile = BrowserProfile(
         headless=True,
+        record_video_dir=str(run_dir),
         interaction_highlight_color="rgb(99, 102, 241)",  # indigo
         interaction_highlight_duration=1.5,
     )
+    session = BrowserSession(browser_profile=profile)
     agent = Agent(
         task=task,
         llm=llm,
