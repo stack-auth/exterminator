@@ -48,8 +48,7 @@ BROWSER_USE_API_KEY=bu_...         # get from cloud.browser-use.com
 ANTHROPIC_API_KEY=sk-ant-...       # get from console.anthropic.com
                                    # must have Claude Code credits
 
-# Leave as-is unless your app runs on a different port
-APP_URL=http://localhost:3000
+APP_URL=http://localhost:3001
 ```
 
 > **Note:** `BROWSER_USE_API_KEY` drives the reproduce + validate steps.
@@ -64,7 +63,7 @@ In a separate terminal, from the repo root:
 
 ```bash
 cd test-app
-python3 -m http.server 3000
+python3 -m http.server 3001
 ```
 
 Leave it running. The browser agent will open a real browser against it.
