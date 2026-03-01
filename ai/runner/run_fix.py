@@ -16,6 +16,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from context import PipelineContext
 from claude_agent_sdk import (
@@ -34,6 +35,27 @@ from claude_agent_sdk import (
 from build_prompt import build_prompt
 
 load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# Structured output schema
+#
+# Passed as output_format= to ClaudeAgentOptions, which maps to the Anthropic
+# Messages API's JSON-schema enforcement. The parsed result lands in
+# ResultMessage.structured_output (Any), not ResultMessage.result (str).
+# ---------------------------------------------------------------------------
+
+class FixOutput(BaseModel):
+    root_cause: str = Field(
+        description="One sentence: the underlying bug and why it occurred"
+    )
+    fix_description: str = Field(
+        description="2-4 sentences: what was changed in which files and how it fixes the root cause"
+    )
+    changed_files: list[str] = Field(
+        default_factory=list,
+        description="Relative paths of every file you edited",
+    )
 
 # ---------------------------------------------------------------------------
 # Project structure helper
@@ -105,10 +127,21 @@ async def run_fix(ctx: PipelineContext) -> dict:
                 changed_files.append(file_path)
         return {}
 
+    # Pass ANTHROPIC_API_KEY explicitly to the CLI subprocess so it doesn't
+    # need to be interactively logged in.
+    cli_env: dict[str, str] = {}
+    if os.getenv("ANTHROPIC_API_KEY"):
+        cli_env["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
+
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Edit", "Write", "Grep", "Glob"],
         permission_mode="acceptEdits",
         cwd=source_dir,
+        env=cli_env,
+        output_format={
+            "type": "json_schema",
+            "schema": FixOutput.model_json_schema(),
+        },
         hooks={
             "PostToolUse": [HookMatcher(hooks=[on_post_tool_use])],
         },
@@ -129,8 +162,8 @@ async def run_fix(ctx: PipelineContext) -> dict:
                 for block in message.content:
                     if isinstance(block, TextBlock) and block.text.strip():
                         print(block.text)
-                        summary_text = block.text
-                        # Reasoning text counts as a step -- gives frontend something to show
+                        # Accumulate reasoning text for progress display; the
+                        # authoritative summary comes from ResultMessage.structured_output
                         step += 1
                         ctx.agent_step("fix", step, block.text[:120], detail="reasoning")
 
@@ -146,7 +179,20 @@ async def run_fix(ctx: PipelineContext) -> dict:
                         ctx.agent_step("fix", step, label, detail=block.name)
 
             elif isinstance(message, ResultMessage):
-                if message.result:
+                # structured_output is populated when output_format was passed --
+                # the SDK deserializes the JSON-schema-enforced final response.
+                if message.structured_output is not None:
+                    try:
+                        out = FixOutput.model_validate(message.structured_output)
+                        summary_text = f"{out.root_cause}\n\n{out.fix_description}"
+                        # Hook-tracked changed_files is primary; agent-reported is fallback
+                        if not changed_files and out.changed_files:
+                            changed_files.extend(out.changed_files)
+                    except Exception as e:
+                        print(f"[WARN] Structured output parse failed: {e}")
+                        if message.result:
+                            summary_text = message.result
+                elif message.result:
                     summary_text = message.result
 
     except CLINotFoundError:

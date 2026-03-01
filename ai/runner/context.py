@@ -337,10 +337,13 @@ class PipelineContext:
     def browser_logs_text(self) -> str:
         if not self.reproduce:
             return ""
-        return "\n".join(
-            f"[{log.get('level', 'log')}] {log.get('message', '')}"
-            for log in self.reproduce.browser_logs
-        )
+        lines = []
+        for log in self.reproduce.browser_logs:
+            if isinstance(log, str):
+                lines.append(log)
+            else:
+                lines.append(f"[{log.get('level', 'log')}] {log.get('message', '')}")
+        return "\n".join(lines)
 
     @property
     def fix_description(self) -> str:

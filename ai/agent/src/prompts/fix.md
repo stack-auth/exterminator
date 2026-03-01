@@ -53,12 +53,19 @@ Use the `Edit` tool to apply the minimal fix. Rules:
 
 ---
 
-## Step 3: Summarize Your Work
+## Step 3: Output a JSON Summary
 
-After editing, write a plain prose summary covering:
+After editing, your final output must be a JSON object with exactly these three fields:
 
-1. **Root cause diagnosed** — what was the underlying bug and why it occurred
-2. **Files changed** — list each file you modified
-3. **What was changed and why** — describe the specific edit(s) and how they fix the root cause
+- **root_cause** (string): One sentence — the underlying bug and why it occurred.
+- **fix_description** (string): 2–4 sentences — what you changed in the code and how it fixes the root cause.
+- **changed_files** (array of strings): Relative paths of every file you edited.
 
-Keep it concise: 3-6 sentences total. No JSON, no code fences, just plain text.
+Example:
+```json
+{
+  "root_cause": "The cart reducer mutated state directly instead of returning a new object, causing React to miss re-renders.",
+  "fix_description": "Replaced the direct array push in cartReducer with a spread that returns a new array. Also updated the removeItem case to use filter instead of splice for the same reason.",
+  "changed_files": ["src/store/cartReducer.ts"]
+}
+```
