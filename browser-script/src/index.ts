@@ -1,4 +1,5 @@
-import { dispatchEvents, type CapturedError } from "./dispatch";
+import { dispatchEvents, dispatchRecording, type CapturedError } from "./dispatch";
+import { startRecording, getEvents } from "./recorder";
 
 const FLUSH_INTERVAL_MS = 5_000;
 const BATCH_SIZE = 10;
@@ -19,14 +20,24 @@ function capture(
   if (seen.has(fp)) return;
   seen.add(fp);
 
+  const ts = Date.now();
+
   buffer.push({
     ...partial,
-    timestamp: Date.now(),
+    timestamp: ts,
     pageUrl: window.location.href,
     userAgent: navigator.userAgent,
   });
 
   if (buffer.length >= BATCH_SIZE) flush();
+
+  // Send the rrweb recording snapshot when an error is captured
+  if (endpoint) {
+    const recording = getEvents();
+    if (recording.length > 0) {
+      dispatchRecording(ts, recording, endpoint);
+    }
+  }
 }
 
 function flush(): void {
@@ -65,6 +76,8 @@ const script = document.currentScript as HTMLScriptElement | null;
 if (script) {
   endpoint = script.getAttribute("data-endpoint") ?? "";
 }
+
+startRecording();
 
 export function init(config: { endpoint: string }): void {
   endpoint = config.endpoint;

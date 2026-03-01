@@ -93,7 +93,7 @@ export interface ErrorEvent {
 // Config
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-8";
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "exterminator-ai-konsti-9";
 
 // ---------------------------------------------------------------------------
 // Singleton Daytona client

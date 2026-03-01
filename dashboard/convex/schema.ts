@@ -14,6 +14,11 @@ export default defineSchema({
     userAgent: v.string(),
   }).index("by_timestamp", ["timestamp"]),
 
+  recordings: defineTable({
+    errorTimestamp: v.number(),
+    events: v.string(),
+  }).index("by_errorTimestamp", ["errorTimestamp"]),
+
   sandboxes: defineTable({
     errorId: v.id("errors"),
     sandboxId: v.string(),
