@@ -77,6 +77,9 @@ export function Notes({
               <p className="text-sm font-bold text-brutal-black truncate">
                 {note.title || "Untitled"}
               </p>
+              <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                {(note.body ?? "").trim().slice(0, 60) || "No content"}
+              </p>
               <p className="text-[11px] text-neutral-500 font-medium">
                 {timeAgo(note.updatedAt)}
               </p>
@@ -117,7 +120,7 @@ export function Notes({
               </div>
             </div>
             <textarea
-              value={selected.body}
+              value={selected.body ?? ""}
               onChange={(e) =>
                 onUpdate(selected.id, { body: e.target.value })
               }

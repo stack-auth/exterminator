@@ -336,7 +336,10 @@ class PipelineContext:
                 if a.validate.notes:
                     lines.append(f"**Agent notes:** {a.validate.notes}")
                 if a.validate.new_errors:
-                    new_err_msgs = [e.get("message", "") for e in a.validate.new_errors]
+                    new_err_msgs = [
+                        e.get("message", "") if isinstance(e, dict) else str(e)
+                        for e in a.validate.new_errors
+                    ]
                     lines.append(f"**New errors introduced:** {'; '.join(new_err_msgs)}")
             lines.append("")
 

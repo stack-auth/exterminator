@@ -7,6 +7,8 @@ export interface Task {
   priority: "low" | "medium" | "high";
   tags: string[] | null;
   createdAt: number;
+  dueDate: string | null;   // ISO date string e.g. "2025-03-15", null if no deadline
+  assignee: { name: string; avatarUrl: string };  // always present for tasks created in-app
 }
 
 export interface Note {
@@ -27,6 +29,8 @@ const SEED_TASKS: Task[] = [
     priority: "high",
     tags: ["code-review", "frontend"],
     createdAt: Date.now() - 3600_000,
+    dueDate: "2025-03-20",
+    assignee: { name: "Sarah Chen", avatarUrl: "" },
   },
   {
     id: "t-2",
@@ -35,6 +39,8 @@ const SEED_TASKS: Task[] = [
     priority: "low",
     tags: ["maintenance"],
     createdAt: Date.now() - 7200_000,
+    dueDate: "2025-03-10",
+    assignee: { name: "Marcus Webb", avatarUrl: "" },
   },
   {
     id: "t-3",
@@ -43,6 +49,8 @@ const SEED_TASKS: Task[] = [
     priority: "medium",
     tags: ["testing", "ci"],
     createdAt: Date.now() - 1800_000,
+    dueDate: "2025-03-14",
+    assignee: { name: "Alex Kim", avatarUrl: "" },
   },
   {
     id: "t-4",
@@ -51,14 +59,18 @@ const SEED_TASKS: Task[] = [
     priority: "high",
     tags: ["devops", "staging"],
     createdAt: Date.now() - 900_000,
+    dueDate: null,
+    assignee: { name: "Unassigned", avatarUrl: "" },
   },
   {
     id: "t-5",
     title: "Migrate legacy user records",
     completed: false,
     priority: "medium",
-    tags: null, // imported from legacy system — tag data unavailable
+    tags: null,
     createdAt: Date.now() - 300_000,
+    dueDate: null,
+    assignee: { name: "Unassigned", avatarUrl: "" },
   },
 ];
 
@@ -75,6 +87,14 @@ const SEED_NOTES: Note[] = [
     body: "Consider moving to event-driven architecture for the notification system.",
     updatedAt: Date.now() - 7200_000,
   },
+  {
+    id: "n-3",
+    title: "Q2 Roadmap",
+    // Draft imported from Notion — body content not yet synced
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    body: null as any,
+    updatedAt: Date.now() - 600_000,
+  },
 ];
 
 export function useTaskStore() {
@@ -88,6 +108,8 @@ export function useTaskStore() {
       priority,
       tags: [],
       createdAt: Date.now(),
+      dueDate: null,
+      assignee: { name: "Me", avatarUrl: "" },
     };
     setTasks((prev) => [task, ...prev]);
   }, []);

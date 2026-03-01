@@ -52,13 +52,22 @@ If the app's UI has changed due to the fix and a step no longer applies as writt
 
 ---
 
-## Step 3: Check for Regressions
+## Step 3: Full App Regression Sweep (MANDATORY)
 
-After completing all reproduction steps:
+After confirming the original fix, you MUST navigate through every top-level section of the application. **Do not skip any section, even if the fix seems clearly correct.**
 
-1. Review ALL console errors, not just the one you were looking for
-2. Compare against the original browser logs -- identify any errors present now that were NOT present in the original reproduction
-3. Note any warnings that seem newly introduced
+1. Identify every navigation entry point visible in the app's sidebar, nav bar, or menu (links, tabs, buttons that switch between top-level views).
+2. For each one, click it, wait for the page to fully load, and check whether an error overlay or crash screen appears.
+3. Repeat until every reachable top-level section has been visited.
+
+**CRITICAL — if you see an error overlay or crash screen on ANY page during this sweep:**
+- Do NOT click "Dismiss" or navigate away immediately
+- Expand any stack trace or "details" section to capture the full error
+- Stay on the error screen for several seconds (this is being recorded)
+- Record the exact error message and the file/line it points to
+- Set `verdict: "regression"` and describe the new error in `newErrors`
+
+Only if every reachable section loads without errors can you set `verdict: "resolved"`.
 
 ---
 
