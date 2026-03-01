@@ -13,7 +13,7 @@ export default function App() {
   const { notes, addNote, updateNote, deleteNote, saveNote } = useNoteStore();
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100">
+    <div className="flex h-screen bg-cream text-brutal-black">
       <Sidebar current={page} onNavigate={setPage} />
       <main className="flex-1 overflow-y-auto px-8 py-8">
         <ErrorBoundary key={page}>

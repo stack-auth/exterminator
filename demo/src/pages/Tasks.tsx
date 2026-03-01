@@ -31,9 +31,9 @@ function exportToCSV(tasks: Task[]) {
 }
 
 const PRIORITY_COLORS = {
-  low: "bg-zinc-700 text-zinc-300",
-  medium: "bg-amber-900/60 text-amber-300",
-  high: "bg-red-900/60 text-red-300",
+  low: "bg-neutral-200 text-brutal-black border-brutal-black",
+  medium: "bg-brutal-yellow text-brutal-black border-brutal-black",
+  high: "bg-brutal-red text-white border-brutal-black",
 };
 
 export function Tasks({
@@ -67,8 +67,12 @@ export function Tasks({
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-white">Tasks</h2>
-      <p className="mt-1 text-sm text-zinc-500">Manage your to-do list</p>
+      <h2 className="text-2xl font-black text-brutal-black uppercase">
+        Tasks
+      </h2>
+      <p className="mt-1 text-sm font-medium text-neutral-500">
+        Manage your to-do list
+      </p>
 
       {/* Add form */}
       <form onSubmit={handleAdd} className="mt-5 flex gap-2">
@@ -77,12 +81,12 @@ export function Tasks({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Add a new task..."
-          className="flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 outline-none focus:border-zinc-600"
+          className="flex-1 border-3 border-brutal-black bg-white px-3 py-2 text-sm text-brutal-black placeholder-neutral-400 outline-none focus:shadow-brutal-sm transition-shadow"
         />
         <select
           value={priority}
           onChange={(e) => setPriority(e.target.value as Task["priority"])}
-          className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-300 outline-none"
+          className="border-3 border-brutal-black bg-white px-3 py-2 text-sm font-bold text-brutal-black outline-none"
         >
           <option value="low">Low</option>
           <option value="medium">Medium</option>
@@ -90,7 +94,7 @@ export function Tasks({
         </select>
         <button
           type="submit"
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+          className="border-3 border-brutal-black bg-brutal-blue px-4 py-2 text-sm font-black text-brutal-black shadow-brutal-sm hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all"
         >
           Add
         </button>
@@ -103,10 +107,10 @@ export function Tasks({
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors capitalize cursor-pointer ${
+              className={`border-2 px-3 py-1 text-xs font-bold transition-all capitalize cursor-pointer ${
                 filter === f
-                  ? "bg-zinc-800 text-white"
-                  : "text-zinc-500 hover:text-zinc-300"
+                  ? "border-brutal-black bg-brutal-black text-white"
+                  : "border-brutal-black text-brutal-black hover:bg-neutral-100"
               }`}
             >
               {f}
@@ -115,52 +119,52 @@ export function Tasks({
         </div>
         <button
           onClick={() => { try { exportToCSV(tasks); } catch (err) { throwError(err); } }}
-          className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 border-2 border-brutal-black px-3 py-1 text-xs font-bold text-brutal-black hover:bg-neutral-100 transition-colors cursor-pointer"
         >
           <span>↓</span> Export CSV
         </button>
       </div>
 
       {/* Task list */}
-      <ul className="mt-4 space-y-1.5">
+      <ul className="mt-4 space-y-2">
         {filtered.map((task) => (
           <li
             key={task.id}
-            className="group flex items-center gap-3 rounded-lg border border-zinc-800/60 bg-zinc-900/40 px-4 py-3 transition-colors hover:bg-zinc-900"
+            className="group flex items-center gap-3 border-3 border-brutal-black bg-white px-4 py-3 shadow-brutal-sm transition-all hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none"
           >
             <button
               onClick={() => onToggle(task.id)}
-              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors cursor-pointer ${
+              className={`flex h-5 w-5 shrink-0 items-center justify-center border-2 transition-colors cursor-pointer ${
                 task.completed
-                  ? "border-emerald-600 bg-emerald-600 text-white"
-                  : "border-zinc-600 hover:border-zinc-400"
+                  ? "border-brutal-black bg-brutal-green text-white"
+                  : "border-brutal-black hover:bg-neutral-100"
               }`}
             >
               {task.completed && (
-                <span className="text-xs leading-none">✓</span>
+                <span className="text-xs font-black leading-none">✓</span>
               )}
             </button>
 
             <div className="min-w-0 flex-1">
               <p
-                className={`text-sm ${
+                className={`text-sm font-bold ${
                   task.completed
-                    ? "text-zinc-500 line-through"
-                    : "text-zinc-200"
+                    ? "text-neutral-400 line-through"
+                    : "text-brutal-black"
                 }`}
               >
                 {task.title}
               </p>
               <div className="mt-1 flex items-center gap-2">
                 <span
-                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${PRIORITY_COLORS[task.priority]}`}
+                  className={`border px-1.5 py-0.5 text-[10px] font-black uppercase ${PRIORITY_COLORS[task.priority]}`}
                 >
                   {task.priority}
                 </span>
                 {task.tags?.map((tag) => (
                   <span
                     key={tag}
-                    className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
+                    className="border border-brutal-black bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold text-brutal-black"
                   >
                     {tag}
                   </span>
@@ -170,14 +174,14 @@ export function Tasks({
 
             <button
               onClick={() => onDelete(task.id)}
-              className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all text-sm cursor-pointer"
+              className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-brutal-red transition-all text-sm font-black cursor-pointer"
             >
               ✕
             </button>
           </li>
         ))}
         {filtered.length === 0 && (
-          <li className="py-8 text-center text-sm text-zinc-600">
+          <li className="py-8 text-center text-sm font-medium text-neutral-400">
             No tasks to show
           </li>
         )}

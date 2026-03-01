@@ -14,19 +14,19 @@ function SettingToggle({
   onChange,
 }: SettingToggleProps) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+    <div className="flex items-center justify-between border-3 border-brutal-black bg-white px-4 py-3 shadow-brutal-sm">
       <div>
-        <p className="text-sm font-medium text-zinc-200">{label}</p>
-        <p className="text-xs text-zinc-500">{description}</p>
+        <p className="text-sm font-bold text-brutal-black">{label}</p>
+        <p className="text-xs text-neutral-500">{description}</p>
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${
-          checked ? "bg-indigo-600" : "bg-zinc-700"
+        className={`relative h-7 w-12 border-2 border-brutal-black transition-colors cursor-pointer ${
+          checked ? "bg-brutal-green" : "bg-neutral-200"
         }`}
       >
         <span
-          className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+          className={`absolute top-0.5 left-0.5 h-5 w-5 border border-brutal-black bg-white transition-transform ${
             checked ? "translate-x-5" : ""
           }`}
         />
@@ -58,8 +58,12 @@ export function Settings() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-white">Settings</h2>
-      <p className="mt-1 text-sm text-zinc-500">Manage your preferences</p>
+      <h2 className="text-2xl font-black text-brutal-black uppercase">
+        Settings
+      </h2>
+      <p className="mt-1 text-sm font-medium text-neutral-500">
+        Manage your preferences
+      </p>
 
       <div className="mt-6 space-y-3 max-w-xl">
         <SettingToggle
@@ -89,13 +93,13 @@ export function Settings() {
       </div>
 
       <div className="mt-8 max-w-xl">
-        <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+        <h3 className="text-sm font-black text-brutal-black uppercase tracking-wider mb-3">
           Data
         </h3>
         <div className="flex gap-3">
           <button
             onClick={handleExport}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+            className="border-3 border-brutal-black bg-brutal-orange px-4 py-2 text-sm font-black text-brutal-black shadow-brutal-sm hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all cursor-pointer"
           >
             Export Data
           </button>

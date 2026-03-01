@@ -44,6 +44,8 @@ npx convex dev          # starts a local Convex backend, generates types, create
   
 ```
 
+Make sure to add the DAYTONA_API_KEY to the .env.local file.
+
 `npx convex dev` will prompt you to either log in or start without an account (local mode). It creates a `.env.local` with `NEXT_PUBLIC_CONVEX_URL` automatically.
 
 ### Running
