@@ -57,13 +57,14 @@ APP_URL=http://localhost:3001
 
 ---
 
-## 4. Start the test app
+## 4. Start the demo app
 
 In a separate terminal, from the repo root:
 
 ```bash
-cd test-app
-python3 -m http.server 3001
+cd demo
+npm install   # first time only
+npm run dev   # starts on http://localhost:3001
 ```
 
 Leave it running. The browser agent will open a real browser against it.
@@ -80,10 +81,10 @@ All commands run from `ai/runner/` with the venv active.
 python3 -c "
 from context import PipelineContext
 ctx = PipelineContext.create(
-    stack_trace='TypeError: Cannot read properties of null (reading \"name\")\n    at displayUserProfile (app.js:42)\n    at HTMLButtonElement.onclick (index.html:1)',
-    app_url='http://localhost:3000',
-    source_dir='/absolute/path/to/test-app',   # <-- update this
-    app_description='Simple user profile viewer.',
+    stack_trace='TypeError: Cannot read properties of null (reading \"join\")\n    at toggleTask (store.ts:92)\n    at HTMLElement.onClick',
+    app_url='http://localhost:3001',
+    source_dir='/absolute/path/to/demo/src',   # <-- update this
+    app_description='Planr — task management app built with React/TypeScript/Vite',
 )
 print('Run ID:', ctx.run_id)
 "
@@ -104,7 +105,7 @@ If validate returns `fixed: false`, repeat the last two commands until it resolv
 ### Check the run state any time
 
 ```bash
-cat runs/$RUN_ID.json | python3 -m json.tool | grep -E '"status"|"verdict"|"reproduced"'
+cat runs/$RUN_ID/run.json | python3 -m json.tool | grep -E '"status"|"verdict"|"reproduced"'
 ```
 
 ---
@@ -117,7 +118,11 @@ cat runs/$RUN_ID.json | python3 -m json.tool | grep -E '"status"|"verdict"|"repr
 | `run_fix.py` | Reads source files, edits the buggy code | Claude CLI (ANTHROPIC_API_KEY) |
 | `run_browser_agent.py validate` | Re-runs the reproduction steps, checks the bug is gone | `ChatBrowserUse` (BROWSER_USE_API_KEY) |
 
-All state is written to `runs/{runId}.json` after every step. Poll that file for live progress (`progress.log` is updated during execution).
+All state is written to `runs/{runId}/run.json` after every step. Poll that file for live progress (`progress.log` is updated during execution).
+
+Each run directory also contains the recorded browser videos:
+- `runs/{runId}/reproduce.mp4` — the bug being triggered
+- `runs/{runId}/validate.mp4` — the same steps after the fix, error gone
 
 ---
 

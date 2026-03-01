@@ -1,5 +1,7 @@
-browser-use
+browser-use[video]
 langchain-openai
 langchain-anthropic
 python-dotenv
 claude-agent-sdk
+pydantic>=2.0
+playwright
