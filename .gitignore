@@ -155,6 +155,7 @@ __pycache__/
 .pnpm-store
 
 # Agent run artifacts (local only, not for review)
+ai/runner/runs/*/
 ai/runner/runs/*.json
 !ai/runner/runs/e61b75f0.json
 ai/runner/claude_agent_docs.md
