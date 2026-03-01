@@ -57,6 +57,7 @@ export interface ReproduceResult {
   steps: ReproduceStep[];
   browser_logs: BrowserLog[];
   notes: string;
+  video_path: string | null;
 }
 
 export interface FixResult {
@@ -79,6 +80,7 @@ export interface ValidateResult {
   browser_logs: BrowserLog[];
   new_errors: NewError[];
   notes: string;
+  video_path: string | null;
 }
 
 export interface Attempt {
@@ -124,7 +126,7 @@ export interface RunContext {
 // ---------------------------------------------------------------------------
 
 export function createRunContext(
-  input: Pick<RunInput, "stack_trace" | "app_url" | "source_dir"> &
+  input: Pick<RunInput, "stack_trace" | "app_url"> &
     Partial<Pick<RunInput, "app_description">>,
   runId?: string
 ): RunContext {
@@ -136,7 +138,7 @@ export function createRunContext(
       stack_trace: input.stack_trace,
       app_url: input.app_url,
       app_description: input.app_description ?? "",
-      source_dir: input.source_dir,
+      source_dir: "/code",
     },
     reproduce: null,
     attempts: [],

@@ -9,6 +9,7 @@ Base URL: `http://localhost:4000` (configurable via `PORT` env var)
 ### `POST /api/runs`
 
 Start a new bug-fix run. Only one run can be active at a time.
+The source directory is always `/code` (the demo app cloned at build time).
 
 **Request body** (JSON):
 
@@ -16,7 +17,6 @@ Start a new bug-fix run. Only one run can be active at a time.
 |-------------------|--------|----------|--------------------------------------|
 | `stack_trace`     | string | yes      | Error stack trace from Sentry / browser SDK |
 | `app_url`         | string | yes      | URL of the running app to test against |
-| `source_dir`      | string | yes      | Absolute path to the app's source code |
 | `app_description` | string | no       | Short description of what the app does |
 
 **Response `201`:**
@@ -88,6 +88,27 @@ Retrieve the full state file for any run by ID (including past runs).
 
 ---
 
+### `GET /api/runs/:runId/videos/:agent`
+
+Stream the recorded browser session video for a specific agent step.
+
+| Parameter | Values                     | Description                |
+|-----------|----------------------------|----------------------------|
+| `runId`   | string                     | The run ID                 |
+| `agent`   | `reproduce` or `validate`  | Which agent's recording    |
+
+**Response `200`:** `video/mp4` file stream.
+
+**Response `400`:** invalid agent name.
+
+**Response `404`:** video not found (run doesn't exist or agent hasn't recorded yet).
+
+Videos are recorded by the browser-use agent during reproduce and validate
+steps. They are stored at `runner/runs/{runId}/{agent}.mp4` and are available
+once the respective agent step completes.
+
+---
+
 ### `GET /api/runs`
 
 List all runs on disk, sorted newest first.
@@ -111,7 +132,7 @@ Serves the control interface (single-page HTML dashboard).
 
 ## RunContext Schema
 
-The shared state file written to `runner/runs/{runId}.json`. Both the Node
+The shared state file written to `runner/runs/{runId}/run.json`. Both the Node
 server and the Python runner scripts read and write this file.
 
 ```jsonc
@@ -123,14 +144,15 @@ server and the Python runner scripts read and write this file.
     "stack_trace": "TypeError: ...",
     "app_url": "http://localhost:3000",
     "app_description": "...",
-    "source_dir": "/path/to/source"
+    "source_dir": "/code"            // always /code
   },
   "reproduce": {                     // null until reproduce agent finishes
     "reproduced": true,
     "error_message": "TypeError: ...",
     "steps": [ /* ordered browser actions */ ],
     "browser_logs": [ /* console output */ ],
-    "notes": "..."
+    "notes": "...",
+    "video_path": "/app/runner/runs/a1b2c3d4/reproduce.mp4"
   },
   "attempts": [
     {
@@ -147,7 +169,8 @@ server and the Python runner scripts read and write this file.
         "steps": [],
         "browser_logs": [],
         "new_errors": [],
-        "notes": ""
+        "notes": "",
+        "video_path": "/app/runner/runs/a1b2c3d4/validate.mp4"
       }
     }
   ],
@@ -156,7 +179,7 @@ server and the Python runner scripts read and write this file.
     "currentAgent": "reproduce",     // "reproduce" | "fix" | "validate" | null
     "phase": "running",              // "idle" | "running" | "done" | "error"
     "currentStep": 3,
-    "currentGoal": "clicking View Profile button",
+    "currentGoal": "Clicked \"View Profile\" button",
     "lastUpdatedAt": "2026-03-01T00:19:40.695Z",
     "log": [
       {
@@ -165,11 +188,40 @@ server and the Python runner scripts read and write this file.
         "message": "reproduce agent started",
         "step": null,
         "detail": null
+      },
+      {
+        "ts": "2026-03-01T00:19:34.907Z",
+        "agent": "reproduce",
+        "message": "Navigated to http://localhost:3000",
+        "step": 1,
+        "detail": "http://localhost:3000/ | Taskflow"
+      },
+      {
+        "ts": "2026-03-01T00:19:37.622Z",
+        "agent": "reproduce",
+        "message": "Clicked \"Add Task\" button",
+        "step": 2,
+        "detail": "http://localhost:3000/ | Taskflow"
       }
     ]
   }
 }
 ```
+
+### Log entry descriptions
+
+Each `progress.log` entry contains a human-readable `message` describing
+what the agent did. The descriptions are built from the agent's intent,
+falling back to a readable translation of the raw action:
+
+| Agent       | `message` examples                                   | `detail`                     |
+|-------------|------------------------------------------------------|------------------------------|
+| reproduce   | "Navigated to http://localhost:3000"                 | URL \| page title            |
+| reproduce   | "Clicked \"Add Task\" button"                        | URL \| page title            |
+| reproduce   | "Ran browser script to inspect page state"           | URL \| page title            |
+| fix         | "Read(/code/src/pages/Tasks.tsx)"                    | tool name (e.g. "Read")      |
+| fix         | "## Diagnosis\n\n**Immediate cause:** ..."           | "reasoning"                  |
+| validate    | "Completed — reporting results"                      | URL \| page title            |
 
 ## Pipeline Flow
 

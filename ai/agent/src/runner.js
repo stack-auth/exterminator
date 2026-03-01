@@ -42,7 +42,7 @@ export class PipelineRunner {
     return dirPath;
   }
 
-  createRun({ stack_trace, app_url, source_dir, app_description }) {
+  createRun({ stack_trace, app_url, app_description }) {
     const runId = randomUUID().slice(0, 8);
     const now = new Date().toISOString();
     const ctx = {
@@ -53,7 +53,7 @@ export class PipelineRunner {
         stack_trace,
         app_url,
         app_description: app_description || "",
-        source_dir,
+        source_dir: "/code",
       },
       reproduce: null,
       attempts: [],
@@ -94,6 +94,12 @@ export class PipelineRunner {
       }
     }
     return [...seen.values()].sort((a, b) => b.mtime - a.mtime);
+  }
+
+  videoPath(runId, agent) {
+    const dir = join(this.runsDir, runId);
+    const p = join(dir, `${agent}.mp4`);
+    return existsSync(p) ? p : null;
   }
 
   // -- Lifecycle --------------------------------------------------------------

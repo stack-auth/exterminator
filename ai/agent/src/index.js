@@ -1,5 +1,5 @@
 import express from "express";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { PipelineRunner } from "./runner.js";
@@ -28,21 +28,16 @@ app.get("/api/runs/current", (_req, res) => {
 });
 
 app.post("/api/runs", async (req, res) => {
-  const { stack_trace, app_url, source_dir, app_description } = req.body;
+  const { stack_trace, app_url, app_description } = req.body;
 
-  if (!stack_trace || !app_url || !source_dir) {
+  if (!stack_trace || !app_url) {
     return res
       .status(400)
-      .json({ error: "stack_trace, app_url, and source_dir are required" });
+      .json({ error: "stack_trace and app_url are required" });
   }
 
   try {
-    const ctx = await runner.start({
-      stack_trace,
-      app_url,
-      source_dir,
-      app_description,
-    });
+    const ctx = await runner.start({ stack_trace, app_url, app_description });
     res.status(201).json({ runId: ctx.runId, status: ctx.status });
   } catch (err) {
     res.status(409).json({ error: err.message });
@@ -61,6 +56,16 @@ app.get("/api/runs/:runId", (req, res) => {
   const ctx = runner.readRun(req.params.runId);
   if (!ctx) return res.status(404).json({ error: "Run not found" });
   res.json(ctx);
+});
+
+app.get("/api/runs/:runId/videos/:agent", (req, res) => {
+  const { runId, agent } = req.params;
+  if (agent !== "reproduce" && agent !== "validate") {
+    return res.status(400).json({ error: "agent must be reproduce or validate" });
+  }
+  const p = runner.videoPath(runId, agent);
+  if (!p) return res.status(404).json({ error: "Video not found" });
+  res.type("video/mp4").sendFile(p);
 });
 
 app.get("/api/runs", (_req, res) => {
